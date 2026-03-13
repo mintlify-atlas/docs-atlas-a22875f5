@@ -1,0 +1,169 @@
+---
+title: "Rank Data Model"
+description: "Ranked queue data structure for Solo/Duo and Flex queues"
+---
+
+The Rank Data model represents a player's standing in a specific ranked queue (Solo/Duo or Flex).
+
+## Rank Data Object
+
+Used as the `soloq` and `flex` fields in the [Player model](/api/models/player).
+
+<ResponseField name="tier" type="string" required>
+  The player's ranked tier.
+  
+  Possible values (ordered highest to lowest):
+  - `"CHALLENGER"`
+  - `"GRANDMASTER"`
+  - `"MASTER"`
+  - `"DIAMOND"`
+  - `"EMERALD"`
+  - `"PLATINUM"`
+  - `"GOLD"`
+  - `"SILVER"`
+  - `"BRONZE"`
+  - `"IRON"`
+</ResponseField>
+
+<ResponseField name="rank" type="string" required>
+  The player's division within their tier.
+  
+  Possible values (ordered highest to lowest):
+  - `"I"` (Division 1)
+  - `"II"` (Division 2)
+  - `"III"` (Division 3)
+  - `"IV"` (Division 4)
+  
+  **Note**: Challenger, Grandmaster, and Master tiers do not use divisions and will typically show `"I"`.
+</ResponseField>
+
+<ResponseField name="leaguePoints" type="number" required>
+  The player's current League Points (LP) in this queue.
+  
+  Range: `0` to `100` for most tiers (Challenger/Grandmaster/Master can exceed 100)
+</ResponseField>
+
+<ResponseField name="wins" type="number" required>
+  Total number of wins in this ranked queue for the current season
+</ResponseField>
+
+<ResponseField name="losses" type="number" required>
+  Total number of losses in this ranked queue for the current season
+</ResponseField>
+
+<ResponseField name="queueType" type="string" required>
+  The queue type identifier.
+  
+  Possible values:
+  - `"RANKED_SOLO_5x5"` - Solo/Duo queue
+  - `"RANKED_FLEX_SR"` - Flex queue
+</ResponseField>
+
+## Example - Solo/Duo Queue
+
+```json
+{
+  "tier": "DIAMOND",
+  "rank": "II",
+  "leaguePoints": 67,
+  "wins": 143,
+  "losses": 128,
+  "queueType": "RANKED_SOLO_5x5"
+}
+```
+
+## Example - Flex Queue
+
+```json
+{
+  "tier": "EMERALD",
+  "rank": "I",
+  "leaguePoints": 42,
+  "wins": 28,
+  "losses": 19,
+  "queueType": "RANKED_FLEX_SR"
+}
+```
+
+## Example - Master Tier
+
+```json
+{
+  "tier": "MASTER",
+  "rank": "I",
+  "leaguePoints": 234,
+  "wins": 89,
+  "losses": 56,
+  "queueType": "RANKED_SOLO_5x5"
+}
+```
+
+## Usage in Player Model
+
+The rank data objects are nested within the player model:
+
+```json
+{
+  "riotId": "Azpy#1337",
+  "puuid": "abc123-def456-ghi789",
+  "soloq": {
+    "tier": "DIAMOND",
+    "rank": "II",
+    "leaguePoints": 67,
+    "wins": 143,
+    "losses": 128,
+    "queueType": "RANKED_SOLO_5x5"
+  },
+  "flex": {
+    "tier": "EMERALD",
+    "rank": "I",
+    "leaguePoints": 42,
+    "wins": 28,
+    "losses": 19,
+    "queueType": "RANKED_FLEX_SR"
+  }
+}
+```
+
+## Null Values
+
+If a player is unranked in a queue, the corresponding field will be `null`:
+
+```json
+{
+  "riotId": "Player#0000",
+  "soloq": null,
+  "flex": {
+    "tier": "GOLD",
+    "rank": "III",
+    "leaguePoints": 15,
+    "wins": 12,
+    "losses": 8,
+    "queueType": "RANKED_FLEX_SR"
+  }
+}
+```
+
+## Rank Scoring
+
+The API uses the following formula to sort players (from `server/index.js:780-786`):
+
+```javascript
+function rankScore(player) {
+  const tierIdx = TIER_ORDER.indexOf(player.soloq.tier);
+  const rankIdx = RANK_ORDER.indexOf(player.soloq.rank);
+  const lp = player.soloq.leaguePoints || 0;
+  return (TIER_ORDER.length - tierIdx) * 10000 + (RANK_ORDER.length - rankIdx) * 100 + lp;
+}
+```
+
+Higher scores indicate higher rank. This is used to sort the ladder in `/api/ladder`.
+
+## Data Source
+
+Rank data comes from Riot's League Entries endpoint:
+```
+GET /lol/league/v4/entries/by-puuid/{puuid}
+```
+
+The API filters the response to extract only Solo/Duo and Flex queue data.

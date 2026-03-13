@@ -1,0 +1,507 @@
+---
+title: "Animation System"
+description: "Animation implementation using GSAP and Motion in the Tullidos SoloQ Ladder"
+---
+
+## Overview
+
+The application uses two primary animation libraries:
+- **GSAP** - For complex timeline-based animations with fine control
+- **Motion (Framer Motion)** - For declarative React animations and transitions
+
+## GSAP Animations
+
+### StaggeredMenu Animation System
+
+**Location**: `client/src/components/StaggeredMenu.jsx`
+
+The StaggeredMenu component showcases advanced GSAP timeline animations.
+
+#### Opening Animation Timeline
+
+```jsx
+const buildOpenTimeline = useCallback(() => {
+  const panel = panelRef.current;
+  const layers = preLayerElsRef.current;
+  const itemEls = Array.from(panel.querySelectorAll('.sm-panel-itemLabel'));
+  const numberEls = Array.from(panel.querySelectorAll('.sm-panel-list[data-numbering] .sm-panel-item'));
+  const socialTitle = panel.querySelector('.sm-socials-title');
+  const socialLinks = Array.from(panel.querySelectorAll('.sm-socials-link'));
+
+  const tl = gsap.timeline({ paused: true });
+
+  // 1. Staggered layer animations
+  layerStates.forEach((ls, i) => {
+    tl.fromTo(
+      ls.el,
+      { xPercent: ls.start },
+      { 
+        xPercent: 0, 
+        duration: 0.42, 
+        ease: 'power3.out', 
+        force3D: true 
+      },
+      i * 0.055  // Stagger by 0.055s
+    );
+  });
+
+  // 2. Main panel slides in
+  const panelInsertTime = lastTime + 0.06;
+  tl.fromTo(
+    panel,
+    { xPercent: panelStart },
+    { 
+      xPercent: 0, 
+      duration: 0.5, 
+      ease: 'power3.out', 
+      force3D: true 
+    },
+    panelInsertTime
+  );
+
+  // 3. Menu items animate in
+  const itemsStart = panelInsertTime + panelDuration * 0.15;
+  tl.to(
+    itemEls,
+    { 
+      yPercent: 0, 
+      rotate: 0, 
+      duration: 0.7, 
+      ease: 'power3.out', 
+      force3D: true,
+      stagger: { each: 0.065, from: 'start' }
+    },
+    itemsStart
+  );
+
+  // 4. Numbers fade in
+  tl.to(
+    numberEls,
+    { 
+      duration: 0.45, 
+      ease: 'power2.out',
+      '--sm-num-opacity': 1,
+      stagger: { each: 0.05, from: 'start' }
+    },
+    itemsStart + 0.06
+  );
+
+  return tl;
+}, []);
+```
+
+#### Animation Timeline Breakdown
+
+| Step | Element | Duration | Delay | Easing | Effect |
+|------|---------|----------|-------|--------|--------|
+| 1 | Pre-layers | 0.42s | Staggered (0.055s) | power3.out | Slide from right |
+| 2 | Main panel | 0.5s | After layers + 0.06s | power3.out | Slide from right |
+| 3 | Menu items | 0.7s | Panel start + 15% | power3.out | Slide up + rotate |
+| 4 | Item numbers | 0.45s | Items + 0.06s | power2.out | Fade in |
+| 5 | Social links | 0.4s | Panel start + 40% | power3.out | Slide up + fade |
+
+#### Icon Rotation Animation
+
+```jsx
+const animateIcon = useCallback(opening => {
+  const icon = iconRef.current;
+  if (!icon) return;
+  
+  spinTweenRef.current?.kill();
+  
+  if (opening) {
+    spinTweenRef.current = gsap.to(icon, {
+      rotate: 225,
+      duration: 0.55,
+      ease: 'power3.out',
+      force3D: true,
+      overwrite: 'auto'
+    });
+  } else {
+    spinTweenRef.current = gsap.to(icon, {
+      rotate: 0,
+      duration: 0.24,
+      ease: 'power3.inOut',
+      force3D: true,
+      overwrite: 'auto'
+    });
+  }
+}, []);
+```
+
+The plus icon rotates **225 degrees** to form an X when opening.
+
+#### Text Cycling Animation
+
+```jsx
+const animateText = useCallback(opening => {
+  const inner = textInnerRef.current;
+  if (!inner) return;
+  
+  const currentLabel = opening ? 'Menu' : 'Close';
+  const targetLabel = opening ? 'Close' : 'Menu';
+  const cycles = 3;
+  const seq = [currentLabel];
+  
+  let last = currentLabel;
+  for (let i = 0; i < cycles; i++) {
+    last = last === 'Menu' ? 'Close' : 'Menu';
+    seq.push(last);
+  }
+  if (last !== targetLabel) seq.push(targetLabel);
+  seq.push(targetLabel);
+  
+  setTextLines(seq);
+  gsap.set(inner, { yPercent: 0 });
+  
+  const lineCount = seq.length;
+  const finalShift = ((lineCount - 1) / lineCount) * 100;
+  
+  textCycleAnimRef.current = gsap.to(inner, {
+    yPercent: -finalShift,
+    duration: 0.32 + lineCount * 0.05,
+    ease: 'power3.out',
+    force3D: true
+  });
+}, []);
+```
+
+The text cycles between "Menu" and "Close" multiple times before settling on the target.
+
+#### Color Transition
+
+```jsx
+const animateColor = useCallback(opening => {
+  const btn = toggleBtnRef.current;
+  if (!btn) return;
+  
+  colorTweenRef.current?.kill();
+  
+  if (changeMenuColorOnOpen) {
+    const targetColor = opening ? openMenuButtonColor : menuButtonColor;
+    colorTweenRef.current = gsap.to(btn, {
+      color: targetColor,
+      delay: 0.18,
+      duration: 0.3,
+      ease: 'power2.out'
+    });
+  }
+}, [openMenuButtonColor, menuButtonColor, changeMenuColorOnOpen]);
+```
+
+---
+
+## Motion Animations
+
+### AnimatedList Item Entrance
+
+**Location**: `client/src/components/AnimatedList.jsx`
+
+```jsx
+const AnimatedItem = ({ children, delay = 0, index, onMouseEnter, onClick }) => {
+  const ref = useRef(null);
+  const inView = useInView(ref, { amount: 0.2, triggerOnce: false });
+  
+  return (
+    <Motion.div
+      ref={ref}
+      data-index={index}
+      onMouseEnter={onMouseEnter}
+      onClick={onClick}
+      initial={{ scale: 0.96, opacity: 0, y: 8 }}
+      animate={
+        inView 
+          ? { scale: 1, opacity: 1, y: 0 } 
+          : { scale: 0.96, opacity: 0, y: 8 }
+      }
+      transition={{ duration: 0.22, delay }}
+    >
+      {children}
+    </Motion.div>
+  );
+};
+```
+
+**Animation Properties**:
+- **Initial State**: Slightly scaled down (0.96), transparent, offset 8px down
+- **Animated State**: Full scale (1), fully opaque, original position
+- **Duration**: 0.22 seconds
+- **Trigger**: When 20% of element is in viewport
+- **Behavior**: Reanimates when scrolling back (triggerOnce: false)
+
+---
+
+### FooterCarousel Slide Transitions
+
+**Location**: `client/src/components/FooterCarousel.jsx`
+
+```jsx
+const variants = {
+  enter: (dir) => ({ 
+    x: dir > 0 ? "100%" : "-100%", 
+    opacity: 0 
+  }),
+  center: { 
+    x: "0%", 
+    opacity: 1 
+  },
+  exit: (dir) => ({ 
+    x: dir > 0 ? "-100%" : "100%", 
+    opacity: 0 
+  }),
+};
+
+<AnimatePresence custom={dir} initial={false}>
+  <motion.div
+    key={slide.key}
+    className="fc__slide"
+    custom={dir}
+    variants={variants}
+    initial="enter"
+    animate="center"
+    exit="exit"
+    transition={{ duration: 0.65, ease: [0.4, 0, 0.2, 1] }}
+    style={{
+      backgroundImage: `url(${DDRAGON}/${slide.key}_0.jpg)`,
+    }}
+  >
+    <div className="fc__overlay" />
+  </motion.div>
+</AnimatePresence>
+```
+
+**Variant States**:
+- **enter**: Slide enters from left or right depending on direction
+- **center**: Centered position with full opacity
+- **exit**: Slide exits to opposite side
+
+**Custom Easing**: `[0.4, 0, 0.2, 1]` (cubic-bezier) for smooth acceleration/deceleration
+
+**Direction Logic**:
+```jsx
+const next = useCallback(() => {
+  setDir(1);  // Positive direction
+  setIndex((prev) => (prev + 1) % SLIDES.length);
+}, []);
+
+const prev = useCallback(() => {
+  setDir(-1);  // Negative direction
+  setIndex((prev) => (prev - 1 + SLIDES.length) % SLIDES.length);
+}, []);
+```
+
+---
+
+## Canvas Animations
+
+### Squares Background Effect
+
+**Location**: `client/src/components/Squares.jsx`
+
+Using `requestAnimationFrame` for continuous animation:
+
+```jsx
+const updateAnimation = () => {
+  const effectiveSpeed = Math.max(speed, 0.1);
+  
+  switch (direction) {
+    case 'right':
+      gridOffset.current.x = (gridOffset.current.x - effectiveSpeed + squareSize) % squareSize;
+      break;
+    case 'left':
+      gridOffset.current.x = (gridOffset.current.x + effectiveSpeed + squareSize) % squareSize;
+      break;
+    case 'up':
+      gridOffset.current.y = (gridOffset.current.y + effectiveSpeed + squareSize) % squareSize;
+      break;
+    case 'down':
+      gridOffset.current.y = (gridOffset.current.y - effectiveSpeed + squareSize) % squareSize;
+      break;
+    case 'diagonal':
+      gridOffset.current.x = (gridOffset.current.x - effectiveSpeed + squareSize) % squareSize;
+      gridOffset.current.y = (gridOffset.current.y - effectiveSpeed + squareSize) % squareSize;
+      break;
+  }
+
+  drawGrid();
+  requestRef.current = requestAnimationFrame(updateAnimation);
+};
+```
+
+**Drawing Logic**:
+```jsx
+const drawGrid = () => {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const startX = Math.floor(gridOffset.current.x / squareSize) * squareSize;
+  const startY = Math.floor(gridOffset.current.y / squareSize) * squareSize;
+
+  for (let x = startX; x < canvas.width + squareSize; x += squareSize) {
+    for (let y = startY; y < canvas.height + squareSize; y += squareSize) {
+      const squareX = x - (gridOffset.current.x % squareSize);
+      const squareY = y - (gridOffset.current.y % squareSize);
+
+      // Hover fill
+      if (hoveredSquare.current && /* matches hovered square */) {
+        ctx.fillStyle = hoverFillColor;
+        ctx.fillRect(squareX, squareY, squareSize, squareSize);
+      }
+
+      // Border
+      ctx.strokeStyle = borderColor;
+      ctx.strokeRect(squareX, squareY, squareSize, squareSize);
+    }
+  }
+
+  // Radial gradient overlay
+  const gradient = ctx.createRadialGradient(
+    canvas.width / 2, canvas.height / 2, 0,
+    canvas.width / 2, canvas.height / 2,
+    Math.sqrt(canvas.width ** 2 + canvas.height ** 2) / 2
+  );
+  gradient.addColorStop(0, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+};
+```
+
+---
+
+## CSS Animations
+
+### Activity Ticker Fade
+
+**Location**: `client/src/index.css:869-890`
+
+```css
+@keyframes fadeInOut {
+  0% {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  10% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  85% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+}
+
+.fade-in-out {
+  animation: fadeInOut 8s ease-in-out infinite;
+}
+```
+
+### Top Row Glow Effect
+
+**Location**: `client/src/index.css:1383-1391`
+
+```css
+@keyframes topRowGlow {
+  0%, 100% {
+    opacity: 0.28;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.player-top::before {
+  animation: topRowGlow 3.4s ease-in-out infinite;
+}
+```
+
+---
+
+## Performance Optimizations
+
+### GSAP Best Practices
+
+1. **Kill Previous Animations**
+```jsx
+openTlRef.current?.kill();
+closeTweenRef.current?.kill();
+```
+
+2. **Use force3D**
+```jsx
+{ xPercent: 0, duration: 0.5, force3D: true }
+```
+Enables hardware acceleration for smoother animations.
+
+3. **Batch Updates**
+```jsx
+const ctx = gsap.context(() => {
+  gsap.set([panel, ...preLayers], { xPercent: offscreen, force3D: true });
+  gsap.set(plusH, { transformOrigin: '50% 50%', rotate: 0 });
+  gsap.set(plusV, { transformOrigin: '50% 50%', rotate: 90 });
+});
+```
+
+### Motion Best Practices
+
+1. **Layout-specific Animations**
+```jsx
+layout  // Automatic layout animations
+layoutId="unique-id"  // Shared layout animations
+```
+
+2. **Reduced Motion Support**
+```jsx
+transition={{ duration: 0.65, ease: [0.4, 0, 0.2, 1] }}
+// Motion automatically respects prefers-reduced-motion
+```
+
+### Canvas Best Practices
+
+1. **RequestAnimationFrame**
+```jsx
+requestRef.current = requestAnimationFrame(updateAnimation);
+// Clean up:
+cancelAnimationFrame(requestRef.current);
+```
+
+2. **Efficient Clearing**
+```jsx
+ctx.clearRect(0, 0, canvas.width, canvas.height);
+// Only redraw visible squares
+```
+
+---
+
+## Animation Timing Reference
+
+### GSAP Easings Used
+
+| Easing | Usage | Effect |
+|--------|-------|--------|
+| power3.out | Menu slides, item entrance | Strong deceleration at end |
+| power2.out | Number fade-in, color change | Medium deceleration |
+| power3.inOut | Icon rotation close | Smooth start and end |
+| power3.in | Menu close | Strong acceleration |
+
+### Typical Durations
+
+| Animation Type | Duration | Notes |
+|----------------|----------|-------|
+| Menu layer slide | 0.42s | Fast enough to feel responsive |
+| Main panel slide | 0.5s | Slightly longer for emphasis |
+| Item entrance | 0.7s | Longer for dramatic effect |
+| Icon rotation | 0.55s (open), 0.24s (close) | Slower open, faster close |
+| Color transition | 0.3s | Standard UI transition |
+| Text cycle | 0.32s + (lines * 0.05s) | Dynamic based on cycles |
+
+### Stagger Delays
+
+| Element | Stagger |
+|---------|----------|
+| Pre-layers | 0.055s between each |
+| Menu items | 0.065s between each |
+| Item numbers | 0.05s between each |
+| Social links | 0.05s between each |

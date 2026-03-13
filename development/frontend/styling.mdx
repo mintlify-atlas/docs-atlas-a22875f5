@@ -1,0 +1,637 @@
+---
+title: "Styling System"
+description: "CSS architecture, design system, and styling approach in the Tullidos SoloQ Ladder"
+---
+
+## Overview
+
+The application uses a combination of:
+- **Global CSS** (`client/src/index.css`) - Base styles, design tokens, and common components
+- **Component CSS** - Scoped styles for specific components
+- **Inline Styles** - Dynamic styling based on data (tier colors, etc.)
+
+## Design Tokens
+
+### CSS Custom Properties
+
+**Location**: `client/src/index.css:1-13`
+
+```css
+:root {
+  --bg-1: #1a2332;
+  --bg-2: #0f1419;
+  --card: #1e2937;
+  --line: #2d3748;
+  --text: #e8eaed;
+  --muted: #8892a8;
+  --accent: #5dade2;
+  --accent-2: #f4a261;
+  --green: #52b788;
+  --red: #ff6b6b;
+  --shadow: 0 14px 30px rgba(0, 0, 0, 0.3);
+}
+```
+
+### Color System
+
+#### Background Gradient
+
+**Location**: `client/src/index.css:24`
+
+```css
+body {
+  background: linear-gradient(135deg, #0f0419 0%, #1a0a2e 50%, #16213e 100%);
+  background-attachment: fixed;
+}
+```
+
+A deep purple-to-blue gradient that stays fixed while scrolling.
+
+#### Tier Colors
+
+**Location**: `client/src/App.jsx:9-20`
+
+```jsx
+const TIER_COLORS = {
+  CHALLENGER: "#f0e68c",    // Khaki gold
+  GRANDMASTER: "#ff6b6b",  // Coral red
+  MASTER: "#c084fc",       // Purple
+  DIAMOND: "#60a5fa",      // Blue
+  EMERALD: "#34d399",      // Green
+  PLATINUM: "#2dd4bf",     // Cyan
+  GOLD: "#d4af37",         // Gold
+  SILVER: "#94a3b8",       // Silver
+  BRONZE: "#b87333",       // Bronze
+  IRON: "#9ca3af",         // Gray
+};
+```
+
+These colors are used for:
+- Player rank badges (`client/src/index.css:528-577`)
+- Border colors on player icons
+- LP text coloring
+- Duel card indicators
+
+---
+
+## Layout System
+
+### Container Structure
+
+```css
+.page-content {
+  min-height: 100vh;
+  padding-top: 80px;  /* Space for fixed menu */
+}
+
+.app {
+  min-height: calc(100vh - 80px);
+  padding: 18px;
+}
+
+.container {
+  width: min(1680px, calc(100vw - 36px));  /* Max 1680px, responsive */
+  margin: 0 auto;
+  background: rgba(30, 41, 55, 0.7);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(138, 43, 226, 0.25);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  padding: 22px;
+}
+```
+
+### Grid Systems
+
+#### Player Ladder Grid
+
+**Location**: `client/src/index.css:1003-1006`
+
+```css
+.rank-col-header,
+.player-row {
+  grid-template-columns: 50px minmax(260px, 1.2fr) 150px 72px minmax(700px, 2.2fr) minmax(220px, 0.9fr);
+}
+```
+
+Column breakdown:
+1. **50px** - Rank number
+2. **minmax(260px, 1.2fr)** - Player info (icon + name)
+3. **150px** - Champion icons
+4. **72px** - Role icon
+5. **minmax(700px, 2.2fr)** - Rank badges (SoloQ + Flex)
+6. **minmax(220px, 0.9fr)** - Warning signals
+
+#### Activity Grid
+
+**Location**: `client/src/index.css:681-685`
+
+```css
+.activity-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+```
+
+Four equal columns for:
+- Best overall LP gain
+- Best flex LP gain  
+- Activity signals ticker
+- Worst overall LP loss
+
+---
+
+## Masonry Layout
+
+**Location**: `client/src/App.jsx:663-687`
+
+```jsx
+const masonryBreakpoints = {
+  default: 5,   // 5 columns
+  1800: 4,      // 4 columns below 1800px
+  1300: 3,      // 3 columns below 1300px
+  900: 2,       // 2 columns below 900px
+  560: 1,       // 1 column below 560px
+};
+
+<Masonry
+  breakpointCols={masonryBreakpoints}
+  className="users-masonry-grid"
+  columnClassName="users-masonry-grid__column"
+>
+  {usersMasonryPlayers.map((player) => (
+    <article className="summoner-tile" key={player.riotId}>
+      {/* Dynamic height tiles */}
+    </article>
+  ))}
+</Masonry>
+```
+
+### Masonry CSS
+
+**Location**: `client/src/index.css:110-130`
+
+```css
+.users-masonry-grid {
+  display: flex;
+  width: calc(100% + 14px);  /* Negative margin compensation */
+  margin-left: -14px;
+  margin-top: 14px;
+}
+
+.users-masonry-grid__column {
+  padding-left: 14px;
+  background-clip: padding-box;
+}
+
+.summoner-tile {
+  position: relative;
+  overflow: hidden;
+  border-radius: 20px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(160, 213, 255, 0.28);
+  background: rgba(10, 22, 40, 0.8);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.28);
+}
+```
+
+Each tile has a **dynamic height** set via inline style:
+```jsx
+const heights = [300, 360, 420, 520, 440, 340];
+
+return shuffled.map((player, index) => ({
+  ...player,
+  tileHeight: heights[index % heights.length],
+}));
+
+<article
+  className="summoner-tile"
+  style={{ minHeight: `${player.tileHeight}px` }}
+>
+```
+
+---
+
+## Component Styling
+
+### StaggeredMenu
+
+**Location**: `client/src/components/StaggeredMenu.css`
+
+Key styling features:
+
+```css
+.staggered-menu-wrapper {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 40;
+  pointer-events: none;  /* Allow clicks through wrapper */
+}
+
+.staggered-menu-header > * {
+  pointer-events: auto;  /* But not through header elements */
+}
+
+.staggered-menu-panel {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: clamp(260px, 38vw, 420px);  /* Responsive width */
+  height: 100%;
+  background: linear-gradient(
+    180deg,
+    rgba(250, 250, 252, 0.98),
+    rgba(240, 241, 245, 0.98)
+  );
+  backdrop-filter: blur(12px);
+  box-shadow: -18px 0 48px rgba(0, 0, 0, 0.22);
+  will-change: transform;  /* Performance optimization */
+}
+```
+
+**Pre-layers for depth effect**:
+```css
+.sm-prelayer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: 100%;
+  transform: translateX(0);
+  will-change: transform;
+  backface-visibility: hidden;  /* Prevent flicker */
+}
+```
+
+### FooterCarousel
+
+**Location**: `client/src/components/FooterCarousel.css`
+
+```css
+.fc {
+  position: relative;
+  width: 100%;
+  height: 300px;
+  margin-top: 400px;  /* Space from content */
+  overflow: hidden;
+  background: #05101e;
+}
+
+.fc__slide {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center 20%;  /* Focus on champion face */
+  will-change: transform, opacity;
+}
+
+.fc__overlay {
+  background: linear-gradient(
+    to top,
+    rgba(5, 16, 30, 0.88) 0%,
+    rgba(5, 16, 30, 0.3) 50%,
+    rgba(5, 16, 30, 0.55) 100%
+  );
+}
+```
+
+**Navigation Arrows**:
+```css
+.fc__arrow {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: rgba(6, 16, 32, 0.72);
+  border: 2px solid rgba(93, 173, 226, 0.55);
+  color: #c8e0f8;
+  font-size: 30px;
+  transition: background 0.18s, border-color 0.18s;
+}
+
+.fc__arrow:hover {
+  background: rgba(93, 173, 226, 0.28);
+  border-color: rgba(93, 173, 226, 0.9);
+}
+```
+
+**Dot Indicators**:
+```css
+.fc__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(93, 173, 226, 0.18);
+  transition: background 0.25s, width 0.25s;
+}
+
+.fc__dot--active {
+  background: rgba(93, 173, 226, 0.92);
+  width: 26px;  /* Expands horizontally */
+}
+```
+
+### AnimatedList
+
+**Location**: `client/src/components/AnimatedList.css`
+
+```css
+.al-list {
+  max-height: 600px;
+  overflow-y: auto;
+  padding: 4px 2px;
+}
+
+.al-item {
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: linear-gradient(120deg, #fff, #faf5ea);
+  transition: background 0.15s ease, border-color 0.15s ease;
+  cursor: pointer;
+  margin-bottom: 8px;
+}
+
+.al-item.al-selected {
+  background: linear-gradient(120deg, #f0f9f4, #e6f4ec);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(43, 106, 79, 0.12);
+}
+```
+
+**Gradient Overlays**:
+```css
+.al-top-gradient {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 48px;
+  background: linear-gradient(
+    to bottom,
+    color-mix(in srgb, var(--card) 80%, white 20%),
+    transparent
+  );
+  pointer-events: none;
+  transition: opacity 0.3s ease;
+}
+```
+
+---
+
+## Visual Effects
+
+### Glassmorphism
+
+Used throughout for modern, layered appearance:
+
+```css
+.container {
+  background: rgba(30, 41, 55, 0.7);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.activity-section {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(109, 194, 255, 0.2), transparent 46%),
+    radial-gradient(circle at 86% 80%, rgba(255, 190, 90, 0.14), transparent 42%),
+    rgba(6, 20, 40, 0.72);
+  backdrop-filter: blur(12px);
+}
+```
+
+### Box Shadows
+
+```css
+/* Elevation system */
+--shadow: 0 14px 30px rgba(0, 0, 0, 0.3);  /* High elevation */
+
+.summoner-tile {
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.28);  /* Medium elevation */
+}
+
+.fc__arrow {
+  box-shadow: none;  /* Flat */
+}
+```
+
+### Gradients
+
+**Linear gradients for depth**:
+```css
+.ladder {
+  background: linear-gradient(
+    160deg,
+    rgba(10, 22, 46, 0.86),
+    rgba(13, 34, 67, 0.72)
+  );
+}
+```
+
+**Radial gradients for highlights**:
+```css
+.activity-section {
+  background:
+    radial-gradient(circle at 12% 8%, rgba(109, 194, 255, 0.2), transparent 46%),
+    radial-gradient(circle at 86% 80%, rgba(255, 190, 90, 0.14), transparent 42%),
+    rgba(6, 20, 40, 0.72);
+}
+```
+
+### Border Styling
+
+```css
+/* Subtle borders with transparency */
+border: 1px solid rgba(138, 43, 226, 0.25);
+
+/* Glowing borders for emphasis */
+.duel-slot.is-winner {
+  border-color: rgba(121, 247, 176, 0.9);
+  box-shadow: 
+    0 0 0 1px rgba(121, 247, 176, 0.4),
+    0 0 24px rgba(121, 247, 176, 0.35);
+}
+
+/* Colored left border for hierarchy */
+.player-row {
+  border-left: 3px solid var(--tier-color, var(--line));
+}
+```
+
+---
+
+## Responsive Design
+
+### Breakpoints
+
+```css
+@media (max-width: 1024px) { /* Tablet */ }
+@media (max-width: 900px)  { /* Small tablet */ }
+@media (max-width: 640px)  { /* Mobile */ }
+@media (max-width: 560px)  { /* Small mobile (Masonry) */ }
+```
+
+### Mobile Adaptations
+
+**At 900px and below**:
+```css
+@media (max-width: 900px) {
+  .rank-col-header,
+  .player-row {
+    grid-template-columns: 38px 1fr 200px 180px;
+  }
+
+  /* Hide champion icons and role on mobile */
+  .rank-col-header__champs,
+  .rank-col-header__role,
+  .player-row .champ-icons,
+  .player-row .role-cell {
+    display: none;
+  }
+}
+```
+
+**At 640px and below**:
+```css
+@media (max-width: 640px) {
+  .container {
+    width: 100%;
+    padding: 16px;
+    border-radius: 16px;
+  }
+
+  .icon {
+    width: 56px;
+    height: 56px;
+  }
+
+  .duel-board {
+    grid-template-columns: 1fr;  /* Stack vertically */
+  }
+
+  .activity-grid {
+    grid-template-columns: 1fr;  /* Single column */
+  }
+}
+```
+
+---
+
+## Typography
+
+### Font Stack
+
+```css
+body {
+  font-family: "Trebuchet MS", "Segoe UI", sans-serif;
+}
+```
+
+### Type Scale
+
+```css
+/* Fluid typography with clamp() */
+h1 {
+  font-size: clamp(2rem, 4vw, 2.8rem);
+  letter-spacing: 0.02em;
+}
+
+.sm-panel-item {
+  font-size: 3.5rem;  /* Large menu items */
+  letter-spacing: -2px;  /* Tight for impact */
+  text-transform: uppercase;
+}
+
+.riot-id {
+  font-size: 21px;
+  font-weight: 800;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.25);
+}
+```
+
+### Font Weights
+
+- **400** - Regular body text
+- **500** - Medium (labels, secondary text)
+- **600** - Semi-bold (menu items, important text)
+- **700** - Bold (headings, emphasis)
+- **800** - Extra bold (player names, large numbers)
+- **900** - Black (major emphasis, hero text)
+
+---
+
+## Best Practices
+
+### Performance
+
+1. **Use CSS Custom Properties for dynamic values**
+```css
+.player-row {
+  border-left: 3px solid var(--tier-color, var(--line));
+}
+```
+```jsx
+style={{ "--tier-color": TIER_COLORS[tier] }}
+```
+
+2. **Will-change for animations**
+```css
+.staggered-menu-panel {
+  will-change: transform;
+}
+```
+
+3. **Contain for isolated layout**
+```css
+.staggered-menu-panel {
+  contain: layout paint style;
+}
+```
+
+### Accessibility
+
+1. **Focus visible states**
+```css
+.sm-toggle:focus-visible {
+  outline: 2px solid #ffffffaa;
+  outline-offset: 4px;
+}
+```
+
+2. **Hover states for interactive elements**
+```css
+button:hover:not(:disabled) {
+  transform: translateY(-1px);
+}
+```
+
+3. **Color contrast**
+- Text on dark backgrounds: `#e8eaed` (light gray)
+- Muted text: `#8892a8` (medium gray)
+- Accent: `#5dade2` (bright blue for visibility)
+
+### Maintainability
+
+1. **Component-scoped CSS files**
+```
+StaggeredMenu.jsx
+StaggeredMenu.css
+```
+
+2. **BEM-like naming conventions**
+```css
+.fc          /* Block */
+.fc__slide   /* Element */
+.fc__dot--active  /* Modifier */
+```
+
+3. **Design tokens in :root**
+```css
+:root {
+  --accent: #5dade2;
+  --shadow: 0 14px 30px rgba(0, 0, 0, 0.3);
+}
+```

@@ -1,0 +1,126 @@
+---
+title: Riot API Integration
+description: How SoloQ Ladder uses the Riot Games API
+---
+
+SoloQ Ladder fetches player data from the Riot Games API. This page explains how to get an API key and how the application manages rate limits.
+
+## Getting an API Key
+
+1. Visit the [Riot Developer Portal](https://developer.riotgames.com/)
+2. Sign in with your Riot account
+3. Navigate to the dashboard
+4. Generate a new **Development API Key**
+
+<Warning>
+  Development keys expire every 24 hours. For production use, you need to apply for a **Production API Key** through the Riot Developer Portal.
+</Warning>
+
+5. Copy your key and add it to `server/.env`:
+
+```bash
+RIOT_API_KEY=RGAPI-your-key-here
+```
+
+## Rate Limits
+
+Riot personal development keys have strict rate limits:
+
+- **20 requests per 1 second**
+- **100 requests per 2 minutes**
+
+SoloQ Ladder stays within these limits using a dual-strategy approach.
+
+### Proactive Rate Limiting
+
+The application budgets conservatively to avoid hitting limits:
+
+- **18 requests per 1 second** (safety margin: 2)
+- **90 requests per 2 minutes** (safety margin: 10)
+
+Implementation in `server/index.js:32-35`:
+
+```javascript
+const RATE_WINDOW_LIMITS = [
+  { count: 18, windowMs: 1_000 },
+  { count: 90, windowMs: 120_000 },
+];
+```
+
+The `waitForRateLimit()` function uses sliding windows to track request timestamps and automatically throttles when approaching limits.
+
+### Reactive Rate Limiting
+
+If a `429 Too Many Requests` response is received:
+
+1. Parse the `retry-after` header
+2. Block all requests until the retry window expires
+3. Use `RATE_LIMIT_FALLBACK_MS` if no header is present
+
+## API Endpoints Used
+
+SoloQ Ladder calls the following Riot API endpoints:
+
+### Account-V1 (EUROPE routing)
+
+- `GET /riot/account/v1/accounts/by-riot-id/{gameName}/{tagLine}` - Resolve summoner name to PUUID
+- `GET /riot/account/v1/accounts/by-puuid/{puuid}` - Get account info from PUUID
+
+### Summoner-V4 (EUW1 platform)
+
+- `GET /lol/summoner/v4/summoners/by-puuid/{puuid}` - Get summoner profile (level, icon)
+
+### League-V4 (EUW1 platform)
+
+- `GET /lol/league/v4/entries/by-puuid/{puuid}` - Get ranked entries (Solo/Flex rank, LP, wins/losses)
+
+### Match-V5 (EUROPE routing)
+
+- `GET /lol/match/v5/matches/by-puuid/{puuid}/ids` - Get recent match IDs
+- `GET /lol/match/v5/matches/{matchId}` - Get match details
+
+### Champion-Mastery-V4 (EUW1 platform)
+
+- `GET /lol/champion-mastery/v4/champion-masteries/by-puuid/{puuid}/top` - Fallback for champion pool when no recent matches
+
+## Request Flow
+
+For each player refresh:
+
+1. Fetch account by Riot ID or PUUID **(1 request)**
+2. Fetch summoner data **(1 request)**
+3. Fetch league entries **(1 request)**
+4. Fetch recent match IDs for Solo/Flex queues **(2 requests)**
+5. Fetch up to 4 new match details **(0-4 requests)**
+6. Fetch champion mastery if needed **(0-1 request)**
+
+**Total per player:** 5-9 requests depending on cache state
+
+With `FRIENDS_PER_REFRESH=2` and `LADDER_CACHE_TTL_MS=60000`, the app refreshes 2 friends per minute, using approximately 10-18 requests per minute.
+
+## Staying Within Limits
+
+The application uses several strategies:
+
+1. **Sliding window throttling** - Automatically waits when approaching rate limits
+2. **Round-robin refresh** - Only updates a subset of friends per cycle
+3. **Persistent caching** - Serves stale data when rate limited (see [Caching](/configuration/caching))
+4. **Incremental match sync** - Only fetches new matches, reuses cached history
+5. **Request batching** - Combines Solo/Flex queue queries efficiently
+
+## Monitoring
+
+Check rate limit status at `/api/status`:
+
+```json
+{
+  "recentRequests1s": 5,
+  "recentRequests2min": 42,
+  "budgetRemaining1s": 13,
+  "budgetRemaining2min": 48,
+  "totalRequests": 1247,
+  "todayRequests": 823
+}
+```
+
+Request counts are persisted to `server/api-stats.json` and survive server restarts.

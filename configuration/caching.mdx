@@ -1,0 +1,248 @@
+---
+title: Caching Strategy
+description: How SoloQ Ladder caches data to minimize API calls and stay within rate limits
+---
+
+SoloQ Ladder uses aggressive caching to provide fast responses while respecting Riot API rate limits. All cache data is persisted to disk and survives server restarts.
+
+## Cache Files
+
+The server maintains two cache files in the `server/` directory:
+
+### ladder-cache.json
+
+Main cache containing:
+
+- `players` - Current ladder snapshot (sorted by rank)
+- `rankedMatchesByPuuid` - Match history per player
+- `playerSnapshotByKey` - Player data indexed by PUUID and Riot ID
+- `rawDataByPuuid` - Raw API responses for fallback
+- `dailyLpByDate` - LP tracking for daily highlights
+- `lpSnapshotByPlayer` - LP snapshots for delta calculation
+- `refreshCursor` - Round-robin position for incremental updates
+- `lastUpdatedAt` - Last successful refresh timestamp
+- `lastError` - Last error message if refresh failed
+
+### api-stats.json
+
+API usage tracking:
+
+- `totalRiotRequests` - Lifetime request count
+- `perDay` - Request count per day (last 31 days)
+- `updatedAt` - Last update timestamp
+
+## Cache Layers
+
+### 1. Ladder Cache (Full Player Snapshot)
+
+**TTL:** Controlled by `LADDER_CACHE_TTL_MS` (default: 60 seconds)
+
+The ladder cache refreshes in the background every minute:
+
+```javascript
+setInterval(async () => {
+  await refreshLadderCache();
+}, LADDER_CACHE_TTL_MS);
+```
+
+Each refresh updates only `FRIENDS_PER_REFRESH` players (default: 2), rotating through the friends list with a cursor.
+
+### 2. Match History Cache
+
+**TTL:** `MATCH_SYNC_TTL_MS` (default: 1,800,000 ms = 30 minutes)
+
+Match history is used to determine:
+- Top 3 played champions
+- Main role
+- Recent match IDs
+
+Implementation in `server/index.js:186-192`:
+
+```javascript
+const cachedEntry = ladderCache.rankedMatchesByPuuid[puuid] || { matches: [], lastSyncAt: null };
+const lastSyncMs = Date.parse(cachedEntry.lastSyncAt);
+const isRecentSync = Number.isFinite(lastSyncMs) && (Date.now() - lastSyncMs) < MATCH_SYNC_TTL_MS;
+
+if (existingMatches.length > 0 && isRecentSync) {
+  // Use cached match data
+}
+```
+
+When cache is fresh, no new match API calls are made.
+
+### 3. Raw Data Fallback
+
+**Structure:** `rawDataByPuuid` in `ladder-cache.json`
+
+Stores the last successful API response for each player:
+
+```javascript
+rawDataByPuuid: {
+  "<puuid>": {
+    account: { gameName, tagLine, puuid },
+    summoner: { profileIconId, summonerLevel },
+    leagueEntries: [...],
+    lastAccountAt: "2026-03-13T10:30:00.000Z",
+    lastSummonerAt: "2026-03-13T10:30:01.000Z",
+    lastLeagueAt: "2026-03-13T10:30:02.000Z"
+  }
+}
+```
+
+Each fetch function tries live API first, then falls back to cached data:
+
+```javascript
+async function fetchSummonerWithCache(puuid) {
+  try {
+    const summoner = await riotFetch(...);
+    // Persist to rawDataByPuuid
+    return summoner;
+  } catch (err) {
+    const cached = ladderCache.rawDataByPuuid[puuid]?.summoner;
+    if (cached) {
+      console.log(`[CACHE] summoner fallback for ${puuid}...`);
+      return cached;
+    }
+    throw err;
+  }
+}
+```
+
+This ensures partial data is always available even during rate limit errors.
+
+## When Cache is Used
+
+### Fresh Data Path
+
+✅ Cache is fresh → Serve from cache, no API calls
+
+- Ladder last updated within `LADDER_CACHE_TTL_MS`
+- Match history synced within `MATCH_SYNC_TTL_MS`
+
+### Stale Data Path
+
+⚠️ Cache is stale → Fetch from API, update cache
+
+- Background refresh triggers every `LADDER_CACHE_TTL_MS`
+- Only `FRIENDS_PER_REFRESH` players updated per cycle
+- Cursor advances to spread load over time
+
+### Rate Limited Path
+
+🛑 Rate limit hit → Serve from `rawDataByPuuid` fallback
+
+- API returns `429 Too Many Requests`
+- Cached data marked with `staleFromCache: true`
+- Ladder remains functional with last known good data
+
+## Cache Persistence
+
+Cache is written to disk:
+
+1. After every successful refresh (`saveCacheToFile()`)
+2. After updating daily LP tracker
+3. On server shutdown (SIGINT, SIGTERM, exit)
+
+Cache is loaded on startup:
+
+```javascript
+const cacheLoadedFromDisk = loadCacheFromFile();
+if (cacheLoadedFromDisk) {
+  console.log("Using cached ladder snapshot from disk.");
+}
+```
+
+**Benefit:** Server restarts don't lose data or trigger full refreshes.
+
+## Incremental Updates
+
+### Round-Robin Refresh
+
+With `FRIENDS_PER_REFRESH=2` and 10 friends:
+
+| Minute | Refresh Cursor | Players Updated |
+|--------|----------------|-----------------|
+| 0      | 0              | Friend 0, 1     |
+| 1      | 2              | Friend 2, 3     |
+| 2      | 4              | Friend 4, 5     |
+| 3      | 6              | Friend 6, 7     |
+| 4      | 8              | Friend 8, 9     |
+| 5      | 0              | Friend 0, 1     |
+
+Each friend gets updated every 5 minutes.
+
+### Match History Merging
+
+When fetching matches (in `server/index.js:209-259`):
+
+1. Fetch up to 5 Solo/Flex match IDs from API
+2. Filter out already cached match IDs
+3. Fetch details for up to 4 new matches
+4. Merge with existing cached matches
+5. Keep newest 20 matches total
+
+This avoids re-fetching match data unnecessarily.
+
+## Cache Invalidation
+
+Explicit invalidation triggers:
+
+- **Adding a friend** - Triggers `refreshLadderCache()`
+- **Removing a friend** - Triggers `refreshLadderCache()`
+- **Force refresh** - `POST /api/force-refresh` with `forceFull=true`
+
+No automatic cache invalidation on player updates - relies on background refresh cycle.
+
+## Daily Tracking
+
+Separate from main cache, `dailyLpByDate` tracks LP changes:
+
+```javascript
+dailyLpByDate: {
+  "2026-03-13": {
+    "puuid:<uuid>": {
+      puuid: "...",
+      riotId: "Player#TAG",
+      soloqStartLp: 245,
+      soloqCurrentLp: 267,
+      soloqDeltaLp: 22,
+      firstSeenAt: "2026-03-13T00:05:00.000Z",
+      lastSeenAt: "2026-03-13T15:30:00.000Z"
+    }
+  }
+}
+```
+
+- Updated on every refresh with current LP
+- Used for "best gain" / "worst loss" highlights
+- Keeps last 14 days of data
+
+## Performance Impact
+
+| Setting | API Calls/Min | Full Refresh Time (10 friends) |
+|---------|---------------|---------------------------------|
+| `FRIENDS_PER_REFRESH=1` | ~5-9 | 10 minutes |
+| `FRIENDS_PER_REFRESH=2` | ~10-18 | 5 minutes |
+| `FRIENDS_PER_REFRESH=5` | ~25-45 | 2 minutes |
+
+With the default safety margin (18 req/1s, 90 req/2min), the app can handle `FRIENDS_PER_REFRESH=5` without hitting rate limits.
+
+## Monitoring Cache Health
+
+Check `/api/status` for cache metrics:
+
+```json
+{
+  "refreshCursor": 4,
+  "playersCached": 15,
+  "rawDataCached": 10,
+  "isRefreshing": false,
+  "lastUpdatedAt": "2026-03-13T15:30:00.000Z",
+  "lastError": null
+}
+```
+
+- `playersCached` - Entries in `playerSnapshotByKey`
+- `rawDataCached` - Entries in `rawDataByPuuid`
+- `isRefreshing` - Whether a refresh is currently in progress
+- `lastError` - Last error message (if any)

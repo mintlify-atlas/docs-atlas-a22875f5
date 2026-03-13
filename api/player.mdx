@@ -1,0 +1,157 @@
+---
+title: 'Player'
+description: 'Fetch individual player data by Riot ID'
+---
+
+## GET /api/player
+
+Fetches detailed ranked data for a specific player by their Riot ID (game name and tag line).
+
+### Query Parameters
+
+<ParamField query="gameName" type="string" default="Azpy">
+  Player's game name (display name)
+</ParamField>
+
+<ParamField query="tagLine" type="string" default="1337">
+  Player's tag line (usually 3-5 characters)
+</ParamField>
+
+### Response
+
+Returns a JSON object with player information:
+
+<ResponseField name="riotId" type="string" required>
+  Full Riot ID in format `gameName#tagLine`
+</ResponseField>
+
+<ResponseField name="gameName" type="string" required>
+  Player's display name
+</ResponseField>
+
+<ResponseField name="tagLine" type="string" required>
+  Player's tag
+</ResponseField>
+
+<ResponseField name="puuid" type="string" required>
+  Player's unique platform identifier
+</ResponseField>
+
+<ResponseField name="profileIconId" type="number" required>
+  Profile icon ID from League of Legends
+</ResponseField>
+
+<ResponseField name="summonerLevel" type="number" required>
+  Current summoner level
+</ResponseField>
+
+<ResponseField name="soloq" type="object">
+  Solo/Duo queue ranked information (null if unranked)
+  
+  <Expandable title="Ranked entry properties">
+    <ResponseField name="queueType" type="string">
+      Queue identifier (`RANKED_SOLO_5x5`)
+    </ResponseField>
+    
+    <ResponseField name="tier" type="string">
+      Rank tier: `CHALLENGER`, `GRANDMASTER`, `MASTER`, `DIAMOND`, `EMERALD`, `PLATINUM`, `GOLD`, `SILVER`, `BRONZE`, or `IRON`
+    </ResponseField>
+    
+    <ResponseField name="rank" type="string">
+      Division within tier: `I`, `II`, `III`, or `IV`
+    </ResponseField>
+    
+    <ResponseField name="leaguePoints" type="number">
+      Current LP in the division (0-100)
+    </ResponseField>
+    
+    <ResponseField name="wins" type="number">
+      Total wins in this queue
+    </ResponseField>
+    
+    <ResponseField name="losses" type="number">
+      Total losses in this queue
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="flex" type="object">
+  Flex queue ranked information (null if unranked). Same structure as `soloq` but with `queueType` of `RANKED_FLEX_SR`
+</ResponseField>
+
+<ResponseField name="topChampions" type="array" required>
+  Array of up to 3 most played champion names from recent ranked matches. Falls back to champion mastery if no recent matches found.
+</ResponseField>
+
+<ResponseField name="mainRole" type="string">
+  Most played role from recent matches: `TOP`, `JUNGLE`, `MIDDLE`, `BOTTOM`, or `UTILITY`
+</ResponseField>
+
+### Example Request
+
+```bash
+curl "http://localhost:3001/api/player?gameName=Azpy&tagLine=1337"
+```
+
+### Example Response
+
+```json
+{
+  "riotId": "Azpy#1337",
+  "gameName": "Azpy",
+  "tagLine": "1337",
+  "puuid": "abc123def456...",
+  "profileIconId": 4923,
+  "summonerLevel": 342,
+  "soloq": {
+    "queueType": "RANKED_SOLO_5x5",
+    "tier": "DIAMOND",
+    "rank": "II",
+    "leaguePoints": 67,
+    "wins": 128,
+    "losses": 115
+  },
+  "flex": {
+    "queueType": "RANKED_FLEX_SR",
+    "tier": "PLATINUM",
+    "rank": "I",
+    "leaguePoints": 43,
+    "wins": 52,
+    "losses": 48
+  },
+  "topChampions": ["Ahri", "Zed", "Yasuo"],
+  "mainRole": "MIDDLE"
+}
+```
+
+### Error Responses
+
+**Missing API Key**
+```json
+{
+  "error": "Falta RIOT_API_KEY en server/.env"
+}
+```
+
+**Player Not Found**
+```json
+{
+  "error": "Riot API 404: Data not found - account not found"
+}
+```
+
+**Rate Limited**
+```json
+{
+  "error": "Riot API rate limit exceeded"
+}
+```
+
+### Notes
+
+- This endpoint makes live API calls to Riot Games and does not use caching
+- Default values are `gameName=Azpy` and `tagLine=1337` if not specified
+- The endpoint fetches recent match data to determine top champions and main role
+- Match data includes both Solo/Duo (queue 420) and Flex (queue 440) ranked games
+- If rate limited, the endpoint will respect Riot's `retry-after` header
+- Top champions fallback to champion mastery data if no recent matches are found

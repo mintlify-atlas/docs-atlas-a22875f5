@@ -1,0 +1,167 @@
+---
+title: 'Ladder'
+description: 'Get all players sorted by rank with cache info'
+---
+
+## GET /api/ladder
+
+Returns all players from the friends list sorted by rank, with caching metadata and Data Dragon version information.
+
+### Response
+
+Returns a JSON object containing:
+
+<ResponseField name="players" type="array" required>
+  Array of player objects sorted by rank (highest to lowest)
+  
+  <Expandable title="Player object properties">
+    <ResponseField name="riotId" type="string">
+      Full Riot ID in format `gameName#tagLine`
+    </ResponseField>
+    
+    <ResponseField name="gameName" type="string">
+      Player's display name
+    </ResponseField>
+    
+    <ResponseField name="tagLine" type="string">
+      Player's tag
+    </ResponseField>
+    
+    <ResponseField name="puuid" type="string">
+      Player's unique identifier
+    </ResponseField>
+    
+    <ResponseField name="profileIconId" type="number">
+      Profile icon ID from League of Legends
+    </ResponseField>
+    
+    <ResponseField name="summonerLevel" type="number">
+      Summoner level
+    </ResponseField>
+    
+    <ResponseField name="soloq" type="object">
+      Solo/Duo queue ranked information
+      
+      <Expandable title="Ranked entry properties">
+        <ResponseField name="tier" type="string">
+          Rank tier (e.g., `CHALLENGER`, `DIAMOND`, `GOLD`)
+        </ResponseField>
+        
+        <ResponseField name="rank" type="string">
+          Division within tier (e.g., `I`, `II`, `III`, `IV`)
+        </ResponseField>
+        
+        <ResponseField name="leaguePoints" type="number">
+          Current LP in the division
+        </ResponseField>
+        
+        <ResponseField name="wins" type="number">
+          Total wins in this queue
+        </ResponseField>
+        
+        <ResponseField name="losses" type="number">
+          Total losses in this queue
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="flex" type="object">
+      Flex queue ranked information (same structure as soloq)
+    </ResponseField>
+    
+    <ResponseField name="topChampions" type="array">
+      Array of up to 3 most played champion names
+    </ResponseField>
+    
+    <ResponseField name="mainRole" type="string">
+      Most played role (e.g., `TOP`, `JUNGLE`, `MIDDLE`, `BOTTOM`, `UTILITY`)
+    </ResponseField>
+    
+    <ResponseField name="emote" type="string">
+      Custom emote associated with this player
+    </ResponseField>
+    
+    <ResponseField name="error" type="string">
+      Error message if player data failed to fetch
+    </ResponseField>
+    
+    <ResponseField name="staleFromCache" type="boolean">
+      Indicates if data is from cache due to rate limiting
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="cachedAt" type="string">
+  ISO 8601 timestamp of when the cache was last updated
+</ResponseField>
+
+<ResponseField name="cacheTtlMs" type="number">
+  Cache time-to-live in milliseconds (default: 60000)
+</ResponseField>
+
+<ResponseField name="stale" type="boolean">
+  Whether the cache is stale due to errors
+</ResponseField>
+
+<ResponseField name="lastError" type="string">
+  Last error message if cache refresh failed
+</ResponseField>
+
+<ResponseField name="ddragonVersion" type="string">
+  Data Dragon version used for champion and asset data
+</ResponseField>
+
+### Example Request
+
+```bash
+curl http://localhost:3001/api/ladder
+```
+
+### Example Response
+
+```json
+{
+  "players": [
+    {
+      "riotId": "Azpy#1337",
+      "gameName": "Azpy",
+      "tagLine": "1337",
+      "puuid": "abc123...",
+      "profileIconId": 4923,
+      "summonerLevel": 342,
+      "soloq": {
+        "tier": "DIAMOND",
+        "rank": "II",
+        "leaguePoints": 67,
+        "wins": 128,
+        "losses": 115
+      },
+      "flex": null,
+      "topChampions": ["Ahri", "Zed", "Yasuo"],
+      "mainRole": "MIDDLE",
+      "emote": "🔥"
+    }
+  ],
+  "cachedAt": "2026-03-13T10:30:00.000Z",
+  "cacheTtlMs": 60000,
+  "stale": false,
+  "lastError": null,
+  "ddragonVersion": "14.24.1"
+}
+```
+
+### Error Response
+
+```json
+{
+  "error": "Falta RIOT_API_KEY en server/.env"
+}
+```
+
+### Notes
+
+- The endpoint automatically refreshes the cache if it's empty or stale
+- Players are sorted by rank using a scoring system: tier, division, and LP
+- If a refresh fails but cached data exists, the stale data is returned with `stale: true`
+- The ladder cache refreshes automatically based on `LADDER_CACHE_TTL_MS` (default 60 seconds)
+- Only a subset of friends (configured by `FRIENDS_PER_REFRESH`) are refreshed per cycle to respect rate limits

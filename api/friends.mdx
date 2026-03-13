@@ -1,0 +1,196 @@
+---
+title: 'Friends'
+description: 'Manage the friends list for ladder tracking'
+---
+
+The Friends API allows you to manage the list of players tracked on the ladder. All three endpoints interact with the `friends.json` file.
+
+## GET /api/friends
+
+Retrieve the list of all friends currently being tracked.
+
+### Response
+
+Returns a JSON array of friend objects:
+
+<ResponseField name="friends" type="array" required>
+  <Expandable title="Friend object properties">
+    <ResponseField name="gameName" type="string" required>
+      Player's game name
+    </ResponseField>
+    
+    <ResponseField name="tagLine" type="string" required>
+      Player's tag line
+    </ResponseField>
+    
+    <ResponseField name="puuid" type="string">
+      Player's unique identifier (automatically populated after first fetch)
+    </ResponseField>
+    
+    <ResponseField name="mote" type="string">
+      Custom emote associated with this friend
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+### Example Request
+
+```bash
+curl http://localhost:3001/api/friends
+```
+
+### Example Response
+
+```json
+[
+  {
+    "gameName": "Azpy",
+    "tagLine": "1337",
+    "puuid": "abc123def456...",
+    "mote": "🔥"
+  },
+  {
+    "gameName": "Player2",
+    "tagLine": "EUW",
+    "puuid": "xyz789..."
+  }
+]
+```
+
+### Error Response
+
+```json
+{
+  "error": "No se pudo leer friends.json"
+}
+```
+
+---
+
+## POST /api/friends
+
+Add a new friend to the tracking list.
+
+### Request Body
+
+<ParamField body="gameName" type="string" required>
+  Player's game name (display name)
+</ParamField>
+
+<ParamField body="tagLine" type="string" required>
+  Player's tag line
+</ParamField>
+
+<ParamField body="emote" type="string">
+  Optional custom emote to associate with this player
+</ParamField>
+
+<ParamField body="mote" type="string">
+  Alternative field for custom emote (legacy support)
+</ParamField>
+
+### Response
+
+<ResponseField name="ok" type="boolean" required>
+  Success indicator (always `true` on success)
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST http://localhost:3001/api/friends \
+  -H "Content-Type: application/json" \
+  -d '{
+    "gameName": "NewPlayer",
+    "tagLine": "1234",
+    "emote": "⭐"
+  }'
+```
+
+### Example Response
+
+```json
+{
+  "ok": true
+}
+```
+
+### Error Responses
+
+**Missing Required Fields**
+```json
+{
+  "error": "gameName y tagLine son obligatorios"
+}
+```
+
+**Player Already Exists**
+```json
+{
+  "error": "Ese jugador ya está en la lista"
+}
+```
+
+### Notes
+
+- After adding a friend, the ladder cache is automatically refreshed if `RIOT_API_KEY` is configured
+- The comparison is case-insensitive for duplicate detection
+- Either `emote` or `mote` can be used to specify a custom emote (stored as `mote` internally)
+
+---
+
+## DELETE /api/friends/:gameName/:tagLine
+
+Remove a friend from the tracking list.
+
+### Path Parameters
+
+<ParamField path="gameName" type="string" required>
+  Player's game name to remove
+</ParamField>
+
+<ParamField path="tagLine" type="string" required>
+  Player's tag line to remove
+</ParamField>
+
+### Response
+
+<ResponseField name="ok" type="boolean" required>
+  Success indicator (always `true` on success)
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X DELETE http://localhost:3001/api/friends/NewPlayer/1234
+```
+
+### Example Response
+
+```json
+{
+  "ok": true
+}
+```
+
+### Error Responses
+
+**Player Not Found**
+```json
+{
+  "error": "Jugador no encontrado"
+}
+```
+
+**Cannot Read File**
+```json
+{
+  "error": "No se pudo leer friends.json"
+}
+```
+
+### Notes
+
+- After deleting a friend, the ladder cache is automatically refreshed if `RIOT_API_KEY` is configured
+- The comparison is case-insensitive when searching for the player to remove
+- URL-encode the path parameters if they contain special characters

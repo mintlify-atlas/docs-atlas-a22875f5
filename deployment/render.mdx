@@ -1,0 +1,262 @@
+---
+title: Deploy to Render
+description: Complete guide to deploying Tullidos SoloQ Ladder on Render
+---
+
+Render is a modern cloud platform with a generous free tier, making it an excellent choice for deploying Tullidos SoloQ Ladder.
+
+## Prerequisites
+
+- A [Render](https://render.com) account
+- Your GitHub repository for Tullidos SoloQ Ladder
+- A valid Riot Games API key
+
+## Deployment Steps
+
+<Steps>
+
+<Step title="Create New Web Service">
+1. Log in to your Render dashboard
+2. Click **New +** button
+3. Select **Web Service**
+4. Choose **Build and deploy from a Git repository**
+</Step>
+
+<Step title="Connect Repository">
+1. Connect your GitHub account if you haven't already
+2. Select the Tullidos SoloQ Ladder repository
+3. Click **Connect**
+</Step>
+
+<Step title="Configure Web Service">
+Fill in the service configuration:
+
+**Basic Settings**:
+- **Name**: Choose a name (e.g., `tullidos-soloq-ladder`)
+- **Region**: Select the region closest to your users
+- **Branch**: `main` (or your default branch)
+- **Root Directory**: Leave empty (use repository root)
+- **Runtime**: `Node`
+
+**Build Settings**:
+- **Build Command**:
+  ```bash
+  npm run build
+  ```
+- **Start Command**:
+  ```bash
+  npm start
+  ```
+
+**Instance Type**:
+- Select **Free** tier (or paid tier based on your needs)
+
+<Note>
+The free tier is suitable for development and low-traffic production use. For high traffic, consider upgrading to a paid instance.
+</Note>
+</Step>
+
+<Step title="Configure Environment Variables">
+In the **Environment Variables** section, add:
+
+**Required**:
+- `RIOT_API_KEY`: Your Riot Games API key
+
+**Optional**:
+- `LADDER_CACHE_TTL_MS`: `60000` (or custom value)
+- `MATCH_SYNC_TTL_MS`: `1800000` (or custom value)
+- `RATE_LIMIT_FALLBACK_MS`: `60000` (or custom value)
+- `FRIENDS_PER_REFRESH`: `2` (or custom value)
+
+<Warning>
+Render automatically provides the `PORT` environment variable. Do not set it manually.
+</Warning>
+</Step>
+
+<Step title="Advanced Settings (Optional)">
+Under **Advanced** options, you can configure:
+
+**Auto-Deploy**:
+- ✅ Enable to automatically deploy on Git push
+
+**Health Check Path** (optional):
+- Set to `/api/ladder` or `/api/stats` to monitor service health
+
+**Docker Command**: Leave empty (not using Docker)
+</Step>
+
+<Step title="Create Web Service">
+1. Review all settings
+2. Click **Create Web Service**
+3. Render will start building and deploying your application
+</Step>
+
+<Step title="Monitor Deployment">
+Watch the build logs in real-time:
+1. The build process will install dependencies
+2. Run the frontend build (`npm run build`)
+3. Start the Express server
+
+Once complete, Render provides a public URL: `https://your-service-name.onrender.com`
+</Step>
+
+</Steps>
+
+## Configuration Details
+
+### Build Process
+
+Render executes the following during build:
+
+```bash
+# Install root dependencies
+npm install
+
+# Postinstall hook runs automatically:
+# npm --prefix server install && npm --prefix client install
+
+# Build frontend
+npm run build
+# (Compiles client to client/dist)
+```
+
+### Start Process
+
+When your service starts:
+
+```bash
+npm start
+# Runs: npm --prefix server run start
+# Which executes: node index.js
+```
+
+The Express server:
+1. Starts on the `PORT` provided by Render
+2. Serves API endpoints at `/api/*`
+3. Serves static frontend files from `client/dist`
+
+## Free Tier Considerations
+
+### Sleep Behavior
+
+Render's free tier **spins down after 15 minutes of inactivity**:
+
+- First request after sleep takes ~30-60 seconds to wake up
+- Subsequent requests are instant
+- Consider a paid tier for always-on service
+
+<Tip>
+You can use services like [UptimeRobot](https://uptimerobot.com) to ping your service every 10 minutes and keep it awake.
+</Tip>
+
+### Disk Persistence
+
+- Render provides **ephemeral disk storage**
+- Cache files (`ladder-cache.json`, `api-stats.json`) persist during runtime
+- Files may be lost during deploys or instance restarts
+- This is acceptable for cache data
+
+## Custom Domain
+
+To use a custom domain:
+
+<Steps>
+
+<Step title="Add Custom Domain">
+1. Go to your service settings
+2. Navigate to **Custom Domain** section
+3. Click **Add Custom Domain**
+4. Enter your domain name
+</Step>
+
+<Step title="Configure DNS">
+Add a CNAME record in your DNS provider:
+
+```
+Type: CNAME
+Name: your-subdomain (or @)
+Value: your-service-name.onrender.com
+```
+</Step>
+
+<Step title="Enable HTTPS">
+Render automatically provisions SSL certificates via Let's Encrypt.
+
+Wait a few minutes for DNS propagation and certificate issuance.
+</Step>
+
+</Steps>
+
+## Environment Groups
+
+For managing environment variables across multiple services:
+
+1. Create an **Environment Group** in Render dashboard
+2. Add shared variables (like `RIOT_API_KEY`)
+3. Link the group to your web service
+
+## Common Issues
+
+### Service fails to start
+
+**Check logs for**:
+- Missing `RIOT_API_KEY`
+- Port binding issues (ensure you're using `process.env.PORT`)
+- Module not found errors (dependency installation failed)
+
+**Solutions**:
+1. Verify all required environment variables are set
+2. Check that build command completed successfully
+3. Review server/index.js:15 - PORT should default to `process.env.PORT || 3001`
+
+### Build succeeds but site doesn't load
+
+**Cause**: Frontend build or static file serving issue.
+
+**Solutions**:
+1. Check logs for `client/dist` directory creation
+2. Verify `npm run build` completed in build logs
+3. Ensure server is serving static files from correct path (server/index.js:20-22)
+
+### 429 Rate Limit Errors
+
+Riot API has strict rate limits:
+- 20 requests per second
+- 100 requests per 2 minutes
+
+**Solutions**:
+- Backend already implements conservative limits (18/s, 90/2min)
+- Increase `RATE_LIMIT_FALLBACK_MS` if needed
+- Reduce `FRIENDS_PER_REFRESH` to limit concurrent requests
+
+## Monitoring and Logs
+
+Render provides:
+- **Logs**: Real-time and historical logs in dashboard
+- **Metrics**: CPU, memory, and bandwidth usage
+- **Events**: Deploy history and service events
+
+## CI/CD Integration
+
+Render automatically deploys on Git push. To customize:
+
+1. Go to service **Settings**
+2. Under **Build & Deploy**:
+   - Configure auto-deploy settings
+   - Set up deploy hooks
+   - Enable preview environments for pull requests
+
+## Pricing
+
+- **Free**: Limited resources, spins down after inactivity
+- **Starter ($7/mo)**: Always-on, more resources
+- **Standard and above**: Production-grade resources
+
+See [Render pricing](https://render.com/pricing) for details.
+
+## Next Steps
+
+- [Set up custom domain](https://render.com/docs/custom-domains)
+- [Configure environment groups](https://render.com/docs/environment-variables#environment-groups)
+- [Enable preview environments](https://render.com/docs/preview-environments)
+- [Set up notifications](https://render.com/docs/notification-integrations)

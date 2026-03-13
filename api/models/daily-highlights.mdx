@@ -1,0 +1,187 @@
+---
+title: "Daily Highlights Model"
+description: "Daily LP gain/loss tracking for leaderboard highlights"
+---
+
+The Daily Highlights model tracks LP changes throughout the day and identifies the best gains and worst losses across all players.
+
+## Daily Highlights Object
+
+Returned as part of the `/api/status` endpoint under the `dailyHighlights` field.
+
+<ResponseField name="date" type="string" required>
+  The date key for this highlights snapshot in `YYYY-MM-DD` format.
+  
+  Example: `"2026-03-13"`
+</ResponseField>
+
+<ResponseField name="bestSoloqGain" type="object" nullable>
+  The player with the highest LP gain in Solo/Duo queue today.
+  
+  See [Highlight Entry](#highlight-entry-structure) for structure.
+</ResponseField>
+
+<ResponseField name="bestFlexGain" type="object" nullable>
+  The player with the highest LP gain in Flex queue today.
+  
+  See [Highlight Entry](#highlight-entry-structure) for structure.
+</ResponseField>
+
+<ResponseField name="worstSoloqLoss" type="object" nullable>
+  The player with the worst LP loss in Solo/Duo queue today.
+  
+  See [Highlight Entry](#highlight-entry-structure) for structure.
+</ResponseField>
+
+<ResponseField name="bestOverallGain" type="object" nullable>
+  The player with the highest combined LP gain across both queues today.
+  
+  See [Overall Highlight Entry](#overall-highlight-entry-structure) for structure.
+</ResponseField>
+
+<ResponseField name="worstOverallLoss" type="object" nullable>
+  The player with the worst combined LP loss across both queues today.
+  
+  See [Overall Highlight Entry](#overall-highlight-entry-structure) for structure.
+</ResponseField>
+
+## Highlight Entry Structure
+
+Used for `bestSoloqGain`, `bestFlexGain`, and `worstSoloqLoss`.
+
+<ResponseField name="player" type="string" required>
+  The player's Riot ID in `gameName#tagLine` format
+</ResponseField>
+
+<ResponseField name="deltaLp" type="number" required>
+  The LP change for this player today. Positive for gains, negative for losses.
+  
+  Example: `+45` (gained 45 LP) or `-32` (lost 32 LP)
+</ResponseField>
+
+<ResponseField name="currentLp" type="number" required>
+  The player's current LP in this queue
+</ResponseField>
+
+## Overall Highlight Entry Structure
+
+Used for `bestOverallGain` and `worstOverallLoss`.
+
+<ResponseField name="player" type="string" required>
+  The player's Riot ID in `gameName#tagLine` format
+</ResponseField>
+
+<ResponseField name="deltaLp" type="number" required>
+  The combined LP change across both Solo/Duo and Flex queues today.
+  
+  Calculated as: `soloqDeltaLp + flexDeltaLp`
+</ResponseField>
+
+## Example Response
+
+```json
+{
+  "date": "2026-03-13",
+  "bestSoloqGain": {
+    "player": "Azpy#1337",
+    "deltaLp": 45,
+    "currentLp": 67
+  },
+  "bestFlexGain": {
+    "player": "ProPlayer#EUW",
+    "deltaLp": 38,
+    "currentLp": 142
+  },
+  "worstSoloqLoss": {
+    "player": "Unlucky#0001",
+    "deltaLp": -58,
+    "currentLp": 12
+  },
+  "bestOverallGain": {
+    "player": "Grinder#9999",
+    "deltaLp": 67
+  },
+  "worstOverallLoss": {
+    "player": "Tilted#REKT",
+    "deltaLp": -83
+  }
+}
+```
+
+## How It Works
+
+### LP Tracking
+
+The server tracks LP changes using two mechanisms:
+
+1. **Daily LP Map** (`dailyLpByDate[date][playerKey]`): Stores start LP, current LP, and delta LP for each player per day
+2. **Player Snapshot** (`lpSnapshotByPlayer[playerKey]`): Stores the last seen LP values to calculate incremental changes
+
+### Delta Calculation
+
+From `server/index.js:351-359`:
+
+```javascript
+if (Number.isFinite(soloLp)) {
+  if (entry.soloqStartLp === null) entry.soloqStartLp = soloLp;
+  const prevSolo = Number(playerSnapshot.soloqLp);
+  if (Number.isFinite(prevSolo) && playerSnapshot.lastDateKey === todayKey) {
+    entry.soloqDeltaLp = Number(entry.soloqDeltaLp || 0) + (soloLp - prevSolo);
+  }
+  entry.soloqCurrentLp = soloLp;
+  playerSnapshot.soloqLp = soloLp;
+}
+```
+
+### Fallback Behavior
+
+If no LP changes have been tracked yet today (fresh server start), the highlights fall back to showing the current highest/lowest ranked players with `deltaLp: 0`.
+
+From `server/index.js:439-499`, this ensures the UI never shows completely empty highlight cards.
+
+## Data Persistence
+
+- Daily LP data is saved to `ladder-cache.json`
+- Only the last 14 days of data are retained to prevent unbounded growth
+- Player snapshots persist across server restarts
+
+## Usage Example
+
+Fetch daily highlights via the status endpoint:
+
+```bash
+curl http://localhost:3001/api/status
+```
+
+The response includes the `dailyHighlights` object along with other status information:
+
+```json
+{
+  "ok": true,
+  "dailyHighlights": {
+    "date": "2026-03-13",
+    "bestSoloqGain": { ... },
+    "bestFlexGain": { ... },
+    "worstSoloqLoss": { ... },
+    "bestOverallGain": { ... },
+    "worstOverallLoss": { ... }
+  },
+  "isRefreshing": false,
+  "lastUpdatedAt": "2026-03-13T14:30:00.000Z"
+}
+```
+
+## Reset Behavior
+
+Daily highlights reset at midnight (server time). The date key is generated using:
+
+```javascript
+function getDateKey(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+```
+
+When a new day starts, all delta values start from 0 again.

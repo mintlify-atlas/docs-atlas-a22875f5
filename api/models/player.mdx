@@ -1,0 +1,129 @@
+---
+title: "Player Model"
+description: "Complete player data model returned by the API"
+---
+
+The Player model represents a complete snapshot of a player's ranked information, including their Riot ID, ranked queue data, champion pool, and role preferences.
+
+## Player Object
+
+Returned by `/api/player` and as part of the `players` array in `/api/ladder`.
+
+<ResponseField name="riotId" type="string" required>
+  Full Riot ID in the format `gameName#tagLine` (e.g., `Azpy#1337`)
+</ResponseField>
+
+<ResponseField name="gameName" type="string" required>
+  The player's in-game name without tag
+</ResponseField>
+
+<ResponseField name="tagLine" type="string" required>
+  The player's tag/discriminator (e.g., `1337`, `EUW`)
+</ResponseField>
+
+<ResponseField name="puuid" type="string" required>
+  Riot's universal unique identifier for the player. Used for cross-region tracking.
+</ResponseField>
+
+<ResponseField name="profileIconId" type="number" required>
+  Profile icon ID used to construct the icon URL with Data Dragon
+</ResponseField>
+
+<ResponseField name="summonerLevel" type="number" required>
+  The player's current summoner level
+</ResponseField>
+
+<ResponseField name="soloq" type="object" nullable>
+  Ranked Solo/Duo queue data. See [Rank Data](/api/models/rank-data) for structure.
+  
+  `null` if the player is unranked in Solo/Duo.
+</ResponseField>
+
+<ResponseField name="flex" type="object" nullable>
+  Ranked Flex queue data. See [Rank Data](/api/models/rank-data) for structure.
+  
+  `null` if the player is unranked in Flex.
+</ResponseField>
+
+<ResponseField name="topChampions" type="string[]" required>
+  Array of up to 3 champion names the player plays most frequently. Derived from recent ranked matches or champion mastery.
+  
+  Example: `["Ahri", "Lux", "Syndra"]`
+</ResponseField>
+
+<ResponseField name="mainRole" type="string" nullable>
+  The player's most-played role based on recent ranked matches.
+  
+  Possible values: `"TOP"`, `"JUNGLE"`, `"MIDDLE"`, `"BOTTOM"`, `"UTILITY"`, or `null`
+</ResponseField>
+
+<ResponseField name="emote" type="string" nullable>
+  Custom emoji/emote associated with this player in the friends list.
+  
+  Stored in `friends.json` under the `mote` or `emote` field.
+</ResponseField>
+
+<ResponseField name="error" type="string" nullable>
+  Error message if the player data failed to fetch.
+  
+  Common values:
+  - `"Pendiente de actualizar"` - Player not yet fetched
+  - `"Riot en rate limit, reintentando con cache"` - Rate limited, using cached data
+  - `null` if no error occurred
+</ResponseField>
+
+<ResponseField name="staleFromCache" type="boolean" nullable>
+  `true` if this player data was served from cache instead of fresh API data.
+  
+  Only present when using cached/stale data.
+</ResponseField>
+
+## Example Response
+
+```json
+{
+  "riotId": "Azpy#1337",
+  "gameName": "Azpy",
+  "tagLine": "1337",
+  "puuid": "abc123-def456-ghi789",
+  "profileIconId": 4568,
+  "summonerLevel": 342,
+  "soloq": {
+    "tier": "DIAMOND",
+    "rank": "II",
+    "leaguePoints": 67,
+    "wins": 143,
+    "losses": 128,
+    "queueType": "RANKED_SOLO_5x5"
+  },
+  "flex": {
+    "tier": "EMERALD",
+    "rank": "I",
+    "leaguePoints": 42,
+    "wins": 28,
+    "losses": 19,
+    "queueType": "RANKED_FLEX_SR"
+  },
+  "topChampions": ["Ahri", "Lux", "Syndra"],
+  "mainRole": "MIDDLE",
+  "emote": "🔥",
+  "error": null
+}
+```
+
+## Data Sources
+
+The player model aggregates data from multiple Riot API endpoints:
+
+- **Account**: `/riot/account/v1/accounts/by-riot-id/{gameName}/{tagLine}` or `/riot/account/v1/accounts/by-puuid/{puuid}`
+- **Summoner**: `/lol/summoner/v4/summoners/by-puuid/{puuid}`
+- **Ranked**: `/lol/league/v4/entries/by-puuid/{puuid}`
+- **Match History**: `/lol/match/v5/matches/by-puuid/{puuid}/ids`
+- **Champion Mastery**: `/lol/champion-mastery/v4/champion-masteries/by-puuid/{puuid}/top`
+
+## Caching Behavior
+
+- Player data is cached in `ladder-cache.json`
+- Cache TTL is configurable via `LADDER_CACHE_TTL_MS` (default: 60 seconds)
+- When API calls fail, cached snapshots are served with `staleFromCache: true`
+- Match history is synced separately with TTL of `MATCH_SYNC_TTL_MS` (default: 30 minutes)

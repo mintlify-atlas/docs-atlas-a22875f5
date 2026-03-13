@@ -1,0 +1,183 @@
+---
+title: Ladder Tracking
+description: Real-time League of Legends ladder tracking with automatic refresh and rank sorting
+---
+
+The ladder tracking system is the core feature that fetches, caches, and displays player rankings from the Riot API.
+
+## How It Works
+
+The ladder tracker maintains a persistent cache of all friends' rank data and refreshes it automatically:
+
+1. **Initial Load**: On startup, the server loads cached player data from disk
+2. **Automatic Refresh**: Players are refreshed in batches every 60 seconds (configurable)
+3. **Smart Caching**: Each API response is cached to survive rate limits
+4. **Rank Sorting**: Players are automatically sorted by Solo Queue rank score
+
+## API Endpoint
+
+The main ladder endpoint returns all tracked players:
+
+```javascript
+GET /api/ladder
+```
+
+### Response Structure
+
+```json
+{
+  "players": [
+    {
+      "riotId": "PlayerName#TAG",
+      "gameName": "PlayerName",
+      "tagLine": "TAG",
+      "puuid": "abc123...",
+      "profileIconId": 4523,
+      "summonerLevel": 342,
+      "soloq": {
+        "tier": "DIAMOND",
+        "rank": "II",
+        "leaguePoints": 67,
+        "wins": 145,
+        "losses": 132
+      },
+      "flex": {
+        "tier": "PLATINUM",
+        "rank": "I",
+        "leaguePoints": 84,
+        "wins": 23,
+        "losses": 19
+      },
+      "topChampions": ["Jinx", "Caitlyn", "Ashe"],
+      "mainRole": "BOTTOM"
+    }
+  ],
+  "cachedAt": "2026-03-13T10:30:00.000Z",
+  "cacheTtlMs": 60000,
+  "stale": false,
+  "ddragonVersion": "14.24.1"
+}
+```
+
+## Rank Scoring System
+
+Players are sorted using a numeric score calculated from tier, division, and LP:
+
+```javascript server/index.js
+function rankScore(player) {
+  if (!player.soloq) return -1;
+  const tierIdx = TIER_ORDER.indexOf(player.soloq.tier);
+  const rankIdx = RANK_ORDER.indexOf(player.soloq.rank);
+  const lp = player.soloq.leaguePoints || 0;
+  return (TIER_ORDER.length - tierIdx) * 10000 + (RANK_ORDER.length - rankIdx) * 100 + lp;
+}
+```
+
+This ensures accurate sorting from Iron IV to Challenger.
+
+## Refresh Mechanism
+
+The server uses a **rolling refresh cursor** to avoid hitting rate limits:
+
+<CodeGroup>
+```javascript server/index.js
+async function refreshLadderCache(forceFull = false) {
+  const friends = readFriends();
+  const previousPlayers = ladderCache.players;
+
+  let friendIndexesToRefresh = null;
+  if (!forceFull) {
+    friendIndexesToRefresh = new Set();
+    if (friends.length > 0) {
+      const batchSize = Math.min(FRIENDS_PER_REFRESH, friends.length);
+      const start = ladderCache.refreshCursor % friends.length;
+      for (let i = 0; i < batchSize; i += 1) {
+        friendIndexesToRefresh.add((start + i) % friends.length);
+      }
+      ladderCache.refreshCursor = (start + batchSize) % friends.length;
+    }
+  }
+
+  const { players, nextFriends } = await buildLadderSnapshot(
+    friends, 
+    previousPlayers, 
+    friendIndexesToRefresh
+  );
+  ladderCache.players = players;
+  ladderCache.lastUpdatedAt = new Date().toISOString();
+  saveCacheToFile();
+}
+```
+
+```javascript server/index.js
+function scheduleLadderRefresh() {
+  setInterval(async () => {
+    try {
+      if (!RIOT_API_KEY) return;
+      await refreshLadderCache();
+    } catch (error) {
+      console.error("ERROR refreshing ladder cache:", error.message);
+    }
+  }, LADDER_CACHE_TTL_MS);
+}
+```
+</CodeGroup>
+
+By default, only 2 friends are refreshed per cycle to stay within rate limits.
+
+## Rank Badges in UI
+
+The frontend displays rank badges with tier colors and icons:
+
+```jsx client/src/App.jsx
+function RankBadge({ rankData, queueLabel }) {
+  const isRanked = Boolean(rankData);
+  const color = isRanked ? (TIER_COLORS[rankData.tier] || "#94a3b8") : "#9fb2cf";
+  const iconUrl = isRanked ? (RANK_ICONS[rankData.tier] || "") : "";
+  const tierLabel = isRanked ? (TIER_LABELS[rankData.tier] || rankData.tier) : "Sin rank";
+
+  return (
+    <div className={`rank-badge-compact ${isRanked ? "" : "is-unranked"}`}>
+      <span className="queue-label">{queueLabel}</span>
+      <span className="rank-icon-slot">
+        {iconUrl && <img src={iconUrl} alt={rankData.tier} className="rank-icon" />}
+      </span>
+      <div className="rank-info">
+        <span className="rank-text">{tierLabel}</span>
+        {isRanked && <span className="rank-division">{rankData.rank}</span>}
+        <span className="rank-lp" style={{ color }}>
+          {isRanked ? `${rankData.leaguePoints} LP` : "---"}
+        </span>
+      </div>
+    </div>
+  );
+}
+```
+
+## Force Refresh
+
+You can trigger an immediate full refresh of all players:
+
+```bash
+curl -X POST http://localhost:3001/api/force-refresh
+```
+
+This ignores the rolling cursor and fetches everyone at once.
+
+<Note>
+  Force refresh will consume more rate limit budget. Use sparingly.
+</Note>
+
+## Configuration
+
+Key environment variables in `server/.env`:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LADDER_CACHE_TTL_MS` | `60000` | How often to refresh (milliseconds) |
+| `FRIENDS_PER_REFRESH` | `2` | How many players to refresh per cycle |
+| `RIOT_API_KEY` | *required* | Your Riot API key |
+
+<Tip>
+  Increase `FRIENDS_PER_REFRESH` if you have a production API key with higher rate limits.
+</Tip>

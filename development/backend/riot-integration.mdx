@@ -1,0 +1,507 @@
+---
+title: Riot API Integration
+description: Riot API client implementation with rate limiting and caching
+---
+
+The backend implements a robust Riot API client with proactive rate limiting, reactive 429 handling, and multi-layer caching.
+
+## Configuration
+
+### API Key
+
+Riot API key is loaded from environment:
+
+```javascript
+const RIOT_API_KEY = (process.env.RIOT_API_KEY || "").trim();
+```
+
+**Location**: `server/index.js:16`
+
+### Regional Routing
+
+```javascript
+const REGION = "europe";      // Regional endpoint for account/match APIs
+const PLATFORM = "euw1";      // Platform endpoint for summoner/league APIs
+```
+
+**Location**: `server/index.js:23-24`
+
+## Rate Limiting
+
+### Rate Limit Configuration
+
+The implementation stays within Riot's personal API key limits:
+
+```javascript
+// Riot personal key hard limits: 20 req/1 s, 100 req/2 min.
+// We budget to 18/1 s and 90/2 min for a safety margin.
+const RATE_WINDOW_LIMITS = [
+  { count: 18, windowMs: 1_000 },
+  { count: 90, windowMs: 120_000 },
+];
+```
+
+**Location**: `server/index.js:30-35`
+
+**Safety Margin**: 10% buffer to prevent hitting hard limits due to timing variations.
+
+### Proactive Rate Limiting
+
+Sliding window algorithm ensures rate limits are never exceeded:
+
+```javascript
+async function waitForRateLimit() {
+  // Prune timestamps older than the widest window (2 min).
+  const horizon = Date.now() - 120_000;
+  while (requestTimestamps.length > 0 && requestTimestamps[0] < horizon) 
+    requestTimestamps.shift();
+
+  let waitUntil = Date.now();
+  for (const { count, windowMs } of RATE_WINDOW_LIMITS) {
+    if (requestTimestamps.length >= count) {
+      const blockingTs = requestTimestamps[requestTimestamps.length - count];
+      const unlockAt = blockingTs + windowMs + 60; // +60 ms safety buffer
+      if (unlockAt > waitUntil) waitUntil = unlockAt;
+    }
+  }
+
+  const delay = waitUntil - Date.now();
+  if (delay > 0) {
+    console.log(
+      `[RATE] Throttling ${delay} ms — window: ${requestTimestamps.length} req in last 2 min`
+    );
+    await new Promise((r) => setTimeout(r, delay));
+  }
+
+  requestTimestamps.push(Date.now());
+  totalRiotRequests += 1;
+  todayRiotRequests += 1;
+  saveApiStatsToFile(false);
+}
+```
+
+**Location**: `server/index.js:576-603`
+
+**Algorithm**:
+1. Remove timestamps older than 2 minutes
+2. Check each rate limit window (1s, 2min)
+3. Calculate minimum delay needed to stay under limits
+4. Wait if necessary
+5. Record timestamp and increment counters
+
+### Reactive Rate Limiting
+
+Handles 429 responses from Riot API:
+
+```javascript
+if (response.status === 429) {
+  const retryAfterHeader = response.headers.get("retry-after");
+  const retryAfterSeconds = Number(retryAfterHeader);
+  const retryMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+    ? retryAfterSeconds * 1000
+    : RATE_LIMIT_FALLBACK_MS;
+  riotRateLimitedUntil = Date.now() + retryMs;
+
+  const err = new Error("Riot API rate limit exceeded");
+  err.code = "RATE_LIMITED";
+  err.retryAfterMs = retryMs;
+  throw err;
+}
+```
+
+**Location**: `server/index.js:626-638`
+
+**Behavior**:
+- Reads `retry-after` header from response
+- Blocks all requests until limit expires
+- Falls back to 60s if header missing
+
+### Rate Limit Status Tracking
+
+Global state tracks rate limit usage:
+
+```javascript
+const requestTimestamps = []; // sorted epoch-ms of every dispatched Riot request
+let totalRiotRequests = 0;
+let todayRiotRequests = 0;
+let riotRateLimitedUntil = 0; // set reactively when a 429 is received
+```
+
+**Location**: `server/index.js:36-39`
+
+## Core API Wrapper
+
+### riotFetch Function
+
+Centralized wrapper for all Riot API calls:
+
+```javascript
+async function riotFetch(baseUrl) {
+  // Reactive: hard block when a 429 was received.
+  if (Date.now() < riotRateLimitedUntil) {
+    const waitSeconds = Math.ceil((riotRateLimitedUntil - Date.now()) / 1000);
+    const err = new Error(`Rate limit activo, reintentando en ${waitSeconds}s`);
+    err.code = "RATE_LIMITED";
+    throw err;
+  }
+
+  // Proactive: sliding-window throttle — never exceeds 18/1 s or 90/2 min.
+  await waitForRateLimit();
+
+  const response = await fetch(baseUrl, {
+    method: "GET",
+    headers: {
+      Accept: "application/json",
+      "X-Riot-Token": RIOT_API_KEY,
+    },
+  });
+  const text = await response.text();
+
+  if (response.status === 429) {
+    // Handle 429...
+  }
+
+  if (!response.ok) {
+    throw new Error(`Riot API ${response.status}: ${text || response.statusText}`);
+  }
+  return text ? JSON.parse(text) : null;
+}
+```
+
+**Location**: `server/index.js:605-644`
+
+## API Endpoints Used
+
+### Account API
+
+Fetch Riot account details by Riot ID:
+
+```javascript
+const account = await riotFetch(
+  `https://${REGION}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`
+);
+```
+
+**Returns**: `{ gameName, tagLine, puuid }`
+
+**Location**: `server/index.js:757-759`
+
+### Account by PUUID
+
+Fetch account details by PUUID:
+
+```javascript
+const account = await riotFetch(
+  `https://${REGION}.api.riotgames.com/riot/account/v1/accounts/by-puuid/${encodeURIComponent(puuid)}`
+);
+```
+
+**Location**: `server/index.js:711-713`
+
+### Summoner API
+
+Fetch summoner profile data:
+
+```javascript
+const summoner = await riotFetch(
+  `https://${PLATFORM}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${encodeURIComponent(puuid)}`
+);
+```
+
+**Returns**: `{ profileIconId, summonerLevel, puuid }`
+
+**Location**: `server/index.js:673-675`
+
+### League API
+
+Fetch ranked league entries:
+
+```javascript
+const entries = await riotFetch(
+  `https://${PLATFORM}.api.riotgames.com/lol/league/v4/entries/by-puuid/${encodeURIComponent(puuid)}`
+);
+```
+
+**Returns**: Array of league entries (Solo/Duo, Flex)
+
+**Location**: `server/index.js:692-694`
+
+**Entry Format**:
+```javascript
+{
+  queueType: "RANKED_SOLO_5x5",
+  tier: "DIAMOND",
+  rank: "II",
+  leaguePoints: 67,
+  wins: 234,
+  losses: 198
+}
+```
+
+### Match History API
+
+Fetch recent match IDs by queue type:
+
+```javascript
+const soloMatchIds = await riotFetch(
+  `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=420&count=${soloFetchCount}`
+);
+
+const flexMatchIds = await riotFetch(
+  `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?queue=440&count=${flexFetchCount}`
+);
+```
+
+**Queue IDs**:
+- `420`: Ranked Solo/Duo
+- `440`: Ranked Flex
+
+**Location**: `server/index.js:209-215`
+
+### Match Details API
+
+Fetch full match data:
+
+```javascript
+const match = await riotFetch(
+  `https://${REGION}.api.riotgames.com/lol/match/v5/matches/${id}`
+);
+```
+
+**Returns**: Complete match object with participant data
+
+**Location**: `server/index.js:231`
+
+### Champion Mastery API
+
+Fallback for champion pool when match data unavailable:
+
+```javascript
+const masteryRows = await riotFetch(
+  `https://${PLATFORM}.api.riotgames.com/lol/champion-mastery/v4/champion-masteries/by-puuid/${encodeURIComponent(puuid)}/top?count=3`
+);
+```
+
+**Location**: `server/index.js:144-146`
+
+## DDragon Integration
+
+### Version Fetching
+
+Fetch latest Data Dragon version on startup:
+
+```javascript
+async function fetchDDragonVersion() {
+  try {
+    const res = await fetch("https://ddragon.leagueoflegends.com/api/versions.json");
+    const versions = await res.json();
+    if (Array.isArray(versions) && versions.length > 0) {
+      DDRAGON_VERSION = versions[0];
+      console.log("DDragon version:", DDRAGON_VERSION);
+    }
+  } catch (e) {
+    console.warn("Could not fetch DDragon version, using fallback:", e.message);
+  }
+}
+```
+
+**Location**: `server/index.js:105-116`
+
+**Fallback**: Uses `"14.24.1"` if fetch fails
+
+### Champion Data
+
+Fetch champion ID-to-name mapping:
+
+```javascript
+async function getChampionIdNameMap() {
+  if (championIdNameMap) return championIdNameMap;
+
+  const res = await fetch(
+    `https://ddragon.leagueoflegends.com/cdn/${DDRAGON_VERSION}/data/en_US/champion.json`
+  );
+  const json = await res.json();
+  const data = json?.data || {};
+  const map = new Map();
+
+  for (const champion of Object.values(data)) {
+    if (!champion?.key || !champion?.id) continue;
+    map.set(String(champion.key), champion.id);
+  }
+
+  championIdNameMap = map;
+  return championIdNameMap;
+}
+```
+
+**Location**: `server/index.js:118-140`
+
+**Usage**: Converts numeric champion IDs from mastery API to champion names
+
+## Multi-Layer Caching
+
+### Per-Step Cached Fetches
+
+Each API call caches results to survive rate limit failures:
+
+```javascript
+async function fetchSummonerWithCache(puuid) {
+  try {
+    const summoner = await riotFetch(
+      `https://${PLATFORM}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${encodeURIComponent(puuid)}`
+    );
+    const raw = ladderCache.rawDataByPuuid[puuid] || (ladderCache.rawDataByPuuid[puuid] = {});
+    raw.summoner = { profileIconId: summoner.profileIconId, summonerLevel: summoner.summonerLevel };
+    raw.lastSummonerAt = new Date().toISOString();
+    return summoner;
+  } catch (err) {
+    const cached = ladderCache.rawDataByPuuid[puuid]?.summoner;
+    if (cached) {
+      console.log(`[CACHE] summoner fallback for ${puuid.slice(0, 8)}…`);
+      return cached;
+    }
+    throw err;
+  }
+}
+```
+
+**Location**: `server/index.js:671-688`
+
+**Pattern Applied To**:
+- `fetchSummonerWithCache()` - summoner profile
+- `fetchLeagueEntriesWithCache()` - ranked entries
+- `fetchAccountByPuuidWithCache()` - account details
+
+### Raw Data Cache Structure
+
+```javascript
+rawDataByPuuid: {
+  "puuid-abc123": {
+    account: { gameName: "Player", tagLine: "TAG", puuid: "..." },
+    summoner: { profileIconId: 5379, summonerLevel: 437 },
+    leagueEntries: [...],
+    lastAccountAt: "2026-03-13T10:30:00.000Z",
+    lastSummonerAt: "2026-03-13T10:30:00.000Z",
+    lastLeagueAt: "2026-03-13T10:30:00.000Z"
+  }
+}
+```
+
+**Location**: `server/index.js:299`
+
+## Match Syncing
+
+### Incremental Match Fetching
+
+Fetches recent matches with smart caching:
+
+```javascript
+const cachedEntry = ladderCache.rankedMatchesByPuuid[puuid] || { matches: [], lastSyncAt: null };
+const existingMatches = Array.isArray(cachedEntry.matches) ? cachedEntry.matches : [];
+const lastSyncMs = cachedEntry.lastSyncAt ? Date.parse(cachedEntry.lastSyncAt) : NaN;
+const isRecentSync = Number.isFinite(lastSyncMs) && (Date.now() - lastSyncMs) < MATCH_SYNC_TTL_MS;
+
+if (existingMatches.length > 0 && isRecentSync) {
+  // Use cached matches
+  return buildChampionRoleSummary(existingMatches.slice(0, 20));
+}
+```
+
+**Location**: `server/index.js:186-192`
+
+**TTL**: 30 minutes (`MATCH_SYNC_TTL_MS`)
+
+### Bootstrap vs. Update Strategy
+
+```javascript
+const hasBootstrapData = existingMatches.length >= 20;
+
+const soloFetchCount = hasBootstrapData ? 4 : 5;
+const flexFetchCount = hasBootstrapData ? 4 : 5;
+```
+
+**Location**: `server/index.js:204-207`
+
+**Logic**:
+- First sync: Fetch 5 Solo + 5 Flex matches for initial champion pool
+- Subsequent syncs: Fetch 4 + 4 to check for new games
+
+### Match Merging
+
+Preserves order and deduplicates:
+
+```javascript
+const fetchedById = new Map(fetchedMatches.map((m) => [m.id, m]));
+const merged = [];
+
+// Keep newest ordering from incoming IDs first.
+for (const id of incomingIds) {
+  const next = fetchedById.get(id) || existingById.get(id);
+  if (next) merged.push(next);
+}
+
+// Preserve older cached matches after newly seen ones.
+for (const oldMatch of existingMatches) {
+  if (!merged.some((m) => m.id === oldMatch.id)) merged.push(oldMatch);
+}
+
+const finalMatches = merged.slice(0, 20);
+```
+
+**Location**: `server/index.js:247-261`
+
+## Account Tracking
+
+### Automatic PUUID Resolution
+
+Friends are tracked by PUUID to handle name changes:
+
+```javascript
+const nextFriends = results.map((result, index) => {
+  const friend = friends[index] || {};
+  if (result.status !== "fulfilled") return friend;
+  const p = result.value;
+  return {
+    gameName: p.gameName,
+    tagLine: p.tagLine,
+    puuid: p.puuid,
+    mote: getFriendEmote(friend) || undefined
+  };
+});
+```
+
+**Location**: `server/index.js:977-989`
+
+**Benefit**: Name changes are automatically reflected without manual updates
+
+## Error Handling
+
+### Rate Limit Errors
+
+Gracefully degraded with error code:
+
+```javascript
+const isRateLimited = result.reason?.code === "RATE_LIMITED";
+return {
+  riotId: friend.gameName && friend.tagLine
+    ? `${friend.gameName}#${friend.tagLine}`
+    : (friend.puuid || "Unknown#TAG"),
+  error: isRateLimited
+    ? "Riot en rate limit, reintentando con cache"
+    : (result.reason?.message || "Error"),
+  soloq: null
+};
+```
+
+**Location**: `server/index.js:956-969`
+
+### Fallback Chain
+
+Multiple fallback layers ensure data availability:
+
+1. **Live API** - Fresh data
+2. **Player Snapshot Cache** - Recent successful fetch
+3. **Previous Players** - Last known state
+4. **Error Object** - Graceful failure with pending message
+
+**Location**: `server/index.js:876-910`

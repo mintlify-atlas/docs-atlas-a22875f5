@@ -1,0 +1,464 @@
+---
+title: Docker Deployment
+description: Deploy Tullidos SoloQ Ladder using Docker for maximum portability
+---
+
+Docker provides a containerized deployment option for Tullidos SoloQ Ladder, offering consistency across different environments and cloud providers.
+
+## Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) installed
+- [Docker Compose](https://docs.docker.com/compose/install/) (optional, for easier management)
+- A valid Riot Games API key
+
+## Creating a Dockerfile
+
+Since the project doesn't include a Dockerfile, here's a production-ready configuration:
+
+### Multi-stage Dockerfile
+
+Create `Dockerfile` in the repository root:
+
+```dockerfile
+# Stage 1: Build frontend
+FROM node:20-alpine AS frontend-builder
+
+WORKDIR /app/client
+
+# Copy client package files
+COPY client/package*.json ./
+
+# Install client dependencies
+RUN npm ci --only=production
+
+# Copy client source
+COPY client/ ./
+
+# Build frontend
+RUN npm run build
+
+# Stage 2: Setup server
+FROM node:20-alpine AS server-builder
+
+WORKDIR /app/server
+
+# Copy server package files
+COPY server/package*.json ./
+
+# Install server dependencies
+RUN npm ci --only=production
+
+# Stage 3: Production image
+FROM node:20-alpine
+
+WORKDIR /app
+
+# Install dumb-init for proper signal handling
+RUN apk add --no-cache dumb-init
+
+# Copy server files and dependencies
+COPY --from=server-builder /app/server/node_modules ./server/node_modules
+COPY server/ ./server/
+
+# Copy built frontend
+COPY --from=frontend-builder /app/client/dist ./client/dist
+
+# Create directories for cache files
+RUN mkdir -p /app/server && \
+    chown -R node:node /app
+
+# Use non-root user
+USER node
+
+# Expose port
+EXPOSE 3001
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3001/api/stats', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Start server with dumb-init
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "server/index.js"]
+```
+
+### Create .dockerignore
+
+Create `.dockerignore` in the repository root to exclude unnecessary files:
+
+```
+node_modules
+.git
+.env
+*.log
+.DS_Store
+client/node_modules
+client/dist
+server/node_modules
+server/ladder-cache.json
+server/api-stats.json
+.vscode
+.idea
+*.md
+```
+
+## Building the Image
+
+### Local Build
+
+Build the Docker image:
+
+```bash
+docker build -t tullidos-soloq-ladder:latest .
+```
+
+With build arguments:
+
+```bash
+docker build \
+  --build-arg NODE_ENV=production \
+  -t tullidos-soloq-ladder:latest \
+  .
+```
+
+### Multi-platform Build
+
+For ARM and AMD architectures:
+
+```bash
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  -t tullidos-soloq-ladder:latest \
+  .
+```
+
+## Running the Container
+
+### Basic Run
+
+```bash
+docker run -d \
+  --name soloq-ladder \
+  -p 3001:3001 \
+  -e RIOT_API_KEY="your-riot-api-key" \
+  tullidos-soloq-ladder:latest
+```
+
+### With All Environment Variables
+
+```bash
+docker run -d \
+  --name soloq-ladder \
+  -p 3001:3001 \
+  -e RIOT_API_KEY="your-riot-api-key" \
+  -e PORT=3001 \
+  -e LADDER_CACHE_TTL_MS=60000 \
+  -e MATCH_SYNC_TTL_MS=1800000 \
+  -e RATE_LIMIT_FALLBACK_MS=60000 \
+  -e FRIENDS_PER_REFRESH=2 \
+  --restart unless-stopped \
+  tullidos-soloq-ladder:latest
+```
+
+### With Persistent Cache
+
+Mount a volume to persist cache files:
+
+```bash
+docker run -d \
+  --name soloq-ladder \
+  -p 3001:3001 \
+  -e RIOT_API_KEY="your-riot-api-key" \
+  -v soloq-cache:/app/server \
+  --restart unless-stopped \
+  tullidos-soloq-ladder:latest
+```
+
+## Docker Compose
+
+For easier management, create `docker-compose.yml` in the repository root:
+
+```yaml
+version: '3.8'
+
+services:
+  soloq-ladder:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tullidos-soloq-ladder:latest
+    container_name: soloq-ladder
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - RIOT_API_KEY=${RIOT_API_KEY}
+      - PORT=3001
+      - LADDER_CACHE_TTL_MS=60000
+      - MATCH_SYNC_TTL_MS=1800000
+      - RATE_LIMIT_FALLBACK_MS=60000
+      - FRIENDS_PER_REFRESH=2
+    volumes:
+      - cache-data:/app/server
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/api/stats', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+      start_period: 40s
+
+volumes:
+  cache-data:
+    driver: local
+```
+
+### Using Docker Compose
+
+<Steps>
+
+<Step title="Create Environment File">
+Create `.env` file in the repository root:
+
+```bash
+RIOT_API_KEY=your-riot-api-key
+```
+
+<Warning>
+Never commit `.env` files to version control. Add `.env` to your `.gitignore`.
+</Warning>
+</Step>
+
+<Step title="Start Services">
+```bash
+docker-compose up -d
+```
+
+This will:
+1. Build the image if it doesn't exist
+2. Create and start the container
+3. Set up persistent volume for cache
+</Step>
+
+<Step title="View Logs">
+```bash
+docker-compose logs -f soloq-ladder
+```
+</Step>
+
+<Step title="Stop Services">
+```bash
+docker-compose down
+```
+
+To remove volumes as well:
+```bash
+docker-compose down -v
+```
+</Step>
+
+</Steps>
+
+## Container Management
+
+### View Logs
+
+```bash
+docker logs -f soloq-ladder
+```
+
+### Check Container Status
+
+```bash
+docker ps -a | grep soloq-ladder
+```
+
+### Restart Container
+
+```bash
+docker restart soloq-ladder
+```
+
+### Stop Container
+
+```bash
+docker stop soloq-ladder
+```
+
+### Remove Container
+
+```bash
+docker rm -f soloq-ladder
+```
+
+### Execute Commands Inside Container
+
+```bash
+docker exec -it soloq-ladder sh
+```
+
+## Cloud Deployment
+
+### AWS ECS
+
+1. Push image to Amazon ECR
+2. Create ECS task definition
+3. Configure environment variables
+4. Deploy to ECS cluster
+
+### Google Cloud Run
+
+```bash
+# Build and push to Google Container Registry
+gcloud builds submit --tag gcr.io/PROJECT_ID/soloq-ladder
+
+# Deploy to Cloud Run
+gcloud run deploy soloq-ladder \
+  --image gcr.io/PROJECT_ID/soloq-ladder \
+  --platform managed \
+  --region us-central1 \
+  --set-env-vars RIOT_API_KEY="your-key"
+```
+
+### Azure Container Instances
+
+```bash
+# Push to Azure Container Registry
+az acr build --registry myregistry --image soloq-ladder:latest .
+
+# Deploy to ACI
+az container create \
+  --resource-group myResourceGroup \
+  --name soloq-ladder \
+  --image myregistry.azurecr.io/soloq-ladder:latest \
+  --environment-variables RIOT_API_KEY="your-key" \
+  --ports 3001
+```
+
+### DigitalOcean App Platform
+
+1. Push image to DigitalOcean Container Registry
+2. Create app from container image
+3. Configure environment variables
+4. Deploy
+
+### Fly.io
+
+Create `fly.toml`:
+
+```toml
+app = "soloq-ladder"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 512
+```
+
+Deploy:
+
+```bash
+fly launch
+fly secrets set RIOT_API_KEY="your-riot-api-key"
+fly deploy
+```
+
+## Production Best Practices
+
+### Resource Limits
+
+Set memory and CPU limits:
+
+```bash
+docker run -d \
+  --name soloq-ladder \
+  --memory="512m" \
+  --cpus="0.5" \
+  -p 3001:3001 \
+  -e RIOT_API_KEY="your-key" \
+  tullidos-soloq-ladder:latest
+```
+
+### Monitoring
+
+Use Docker health checks:
+
+```bash
+docker inspect --format='{{json .State.Health}}' soloq-ladder | jq
+```
+
+### Logging
+
+Configure log driver:
+
+```bash
+docker run -d \
+  --log-driver json-file \
+  --log-opt max-size=10m \
+  --log-opt max-file=3 \
+  ...
+```
+
+### Security
+
+- ✅ Run as non-root user (already configured)
+- ✅ Use `.dockerignore` to exclude sensitive files
+- ✅ Keep base image updated (`node:20-alpine`)
+- ✅ Don't include `.env` files in image
+- ✅ Use secrets management for production
+
+## Troubleshooting
+
+### Container exits immediately
+
+**Check logs**:
+```bash
+docker logs soloq-ladder
+```
+
+Common issues:
+- Missing `RIOT_API_KEY`
+- Port already in use
+- File permission issues
+
+### Cannot connect to container
+
+**Verify port mapping**:
+```bash
+docker port soloq-ladder
+```
+
+**Check if service is listening**:
+```bash
+docker exec soloq-ladder netstat -tlnp
+```
+
+### High memory usage
+
+**Check resource usage**:
+```bash
+docker stats soloq-ladder
+```
+
+Adjust Node.js memory:
+```bash
+docker run -d \
+  -e NODE_OPTIONS="--max-old-space-size=256" \
+  ...
+```
+
+## Next Steps
+
+- Set up [CI/CD pipeline](https://docs.docker.com/ci-cd/)
+- Configure [Docker Swarm](https://docs.docker.com/engine/swarm/) for orchestration
+- Implement [Kubernetes deployment](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/)
+- Add [monitoring with Prometheus](https://prometheus.io/docs/guides/docker/)

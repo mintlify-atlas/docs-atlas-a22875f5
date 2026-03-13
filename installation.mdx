@@ -1,0 +1,809 @@
+---
+title: Installation
+description: Complete installation guide for Tullidos SoloQ Ladder with development and production setup
+---
+
+## Prerequisites
+
+<CardGroup cols={2}>
+  <Card title="Node.js" icon="node-js">
+    **Version 20.0.0 or higher** required
+    
+    Download from [nodejs.org](https://nodejs.org/)
+  </Card>
+  
+  <Card title="npm" icon="npm">
+    **Version 10.0.0 or higher** recommended
+    
+    Comes bundled with Node.js
+  </Card>
+  
+  <Card title="Riot API Key" icon="key">
+    Required for fetching player data
+    
+    Get yours at [developer.riotgames.com](https://developer.riotgames.com/)
+  </Card>
+  
+  <Card title="Git" icon="git-alt">
+    For cloning the repository
+    
+    Download from [git-scm.com](https://git-scm.com/)
+  </Card>
+</CardGroup>
+
+## Installation Methods
+
+<Tabs>
+  <Tab title="Standard Installation">
+    ### Clone Repository
+
+    ```bash Terminal
+    git clone https://github.com/yourusername/tullidos-soloq-ladder.git
+    cd tullidos-soloq-ladder
+    ```
+
+    ### Install Dependencies
+
+    The root `package.json` orchestrates both frontend and backend:
+
+    ```json package.json
+    {
+      "name": "tullidos-soloq-ladder",
+      "private": true,
+      "version": "1.0.0",
+      "engines": {
+        "node": ">=20"
+      },
+      "scripts": {
+        "postinstall": "npm --prefix server install && npm --prefix client install",
+        "build": "npm --prefix client run build",
+        "start": "npm --prefix server run start"
+      }
+    }
+    ```
+
+    Install everything:
+
+    ```bash Terminal
+    npm install
+    ```
+
+    This automatically runs `postinstall` which installs:
+    - Backend dependencies in `server/`
+    - Frontend dependencies in `client/`
+  </Tab>
+
+  <Tab title="Manual Installation">
+    ### Backend Setup
+
+    ```bash Terminal
+    cd server
+    npm install
+    ```
+
+    Backend dependencies (`server/package.json`):
+
+    ```json
+    {
+      "dependencies": {
+        "cors": "^2.8.6",
+        "dotenv": "^17.3.1",
+        "express": "^5.2.1"
+      }
+    }
+    ```
+
+    ### Frontend Setup
+
+    ```bash Terminal
+    cd ../client
+    npm install
+    ```
+
+    Frontend dependencies (`client/package.json`):
+
+    ```json
+    {
+      "dependencies": {
+        "gsap": "^3.14.2",
+        "motion": "^12.36.0",
+        "react": "^19.2.0",
+        "react-dom": "^19.2.0",
+        "react-masonry-css": "^1.0.16"
+      },
+      "devDependencies": {
+        "@vitejs/plugin-react": "^5.1.1",
+        "vite": "^7.3.1",
+        "eslint": "^9.39.1"
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration
+
+### Backend Configuration
+
+<Steps>
+  <Step title="Create Environment File">
+    Copy the example environment file:
+
+    ```bash Terminal
+    cd server
+    cp .env.example .env
+    ```
+  </Step>
+
+  <Step title="Configure Environment Variables">
+    Edit `server/.env` with your settings:
+
+    ```bash server/.env
+    # Server Configuration
+    PORT=3001
+
+    # Riot API (REQUIRED)
+    RIOT_API_KEY=RGAPI-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+    # Cache Settings
+    LADDER_CACHE_TTL_MS=60000
+    MATCH_SYNC_TTL_MS=1800000
+
+    # Rate Limiting
+    RATE_LIMIT_FALLBACK_MS=60000
+    FRIENDS_PER_REFRESH=2
+    ```
+
+    <Accordion title="Configuration Reference">
+      ### Required Variables
+
+      | Variable | Description | Default |
+      |----------|-------------|----------|
+      | `RIOT_API_KEY` | **Required**. Your Riot Games API key | None |
+
+      ### Server Settings
+
+      | Variable | Description | Default |
+      |----------|-------------|----------|
+      | `PORT` | Express server port | `3001` |
+
+      ### Cache Settings
+
+      | Variable | Description | Default |
+      |----------|-------------|----------|
+      | `LADDER_CACHE_TTL_MS` | Ladder refresh interval in milliseconds | `60000` (1 min) |
+      | `MATCH_SYNC_TTL_MS` | Match history sync TTL in milliseconds | `1800000` (30 min) |
+
+      ### Rate Limiting
+
+      | Variable | Description | Default |
+      |----------|-------------|----------|
+      | `RATE_LIMIT_FALLBACK_MS` | Wait time after 429 error | `60000` (1 min) |
+      | `FRIENDS_PER_REFRESH` | Friends to refresh per cycle | `2` |
+
+      <Note>
+      The rate limiter is hardcoded to **18 req/1s** and **90 req/2min** to stay under Riot's personal API key limits (20 req/1s, 100 req/2min).
+      </Note>
+    </Accordion>
+  </Step>
+
+  <Step title="Configure Friends List">
+    Edit `server/friends.json` to add players:
+
+    ```json server/friends.json
+    [
+      {
+        "gameName": "Azpy",
+        "tagLine": "1337",
+        "mote": "Azpy"
+      },
+      {
+        "gameName": "Hachitas",
+        "tagLine": "Norge"
+      },
+      {
+        "gameName": "Slayer psycho",
+        "tagLine": "EUW",
+        "mote": "Guantes"
+      }
+    ]
+    ```
+
+    <Accordion title="Friend Object Schema">
+      ```typescript
+      interface Friend {
+        gameName: string;      // Required: Riot ID name (before #)
+        tagLine: string;       // Required: Riot ID tag (after #)
+        puuid?: string;        // Optional: Auto-populated player UUID
+        mote?: string;         // Optional: Custom display name
+        emote?: string;        // Optional: Alias for mote
+      }
+      ```
+
+      **Notes:**
+      - `gameName` and `tagLine` are case-insensitive
+      - `puuid` is automatically fetched and saved after first API call
+      - `mote` or `emote` provides a custom display name (e.g., "Azpy" instead of "Azpy#1337")
+    </Accordion>
+  </Step>
+</Steps>
+
+### Frontend Configuration
+
+<Steps>
+  <Step title="Development Mode">
+    For local development, the frontend auto-detects the backend:
+
+    ```javascript client/src/App.jsx
+    const API_BASE = import.meta.env.VITE_API_URL || 
+      (import.meta.env.DEV 
+        ? "http://localhost:3001" 
+        : window.location.origin);
+    ```
+
+    No configuration needed for local development.
+  </Step>
+
+  <Step title="Production Mode">
+    For production with a separate backend, create `client/.env`:
+
+    ```bash client/.env
+    VITE_API_URL=https://your-backend-url.com
+    ```
+
+    This overrides the default backend URL.
+  </Step>
+</Steps>
+
+## Development Setup
+
+### Running Locally
+
+<CodeGroup>
+```bash Two Terminals (Recommended)
+# Terminal 1 - Backend
+cd server
+npm run dev
+
+# Terminal 2 - Frontend
+cd client
+npm run dev
+```
+
+```bash Single Terminal (tmux/screen)
+# Start backend in background
+cd server && npm run dev &
+
+# Start frontend
+cd client && npm run dev
+```
+</CodeGroup>
+
+### Development Scripts
+
+<Tabs>
+  <Tab title="Backend">
+    ```json server/package.json
+    {
+      "scripts": {
+        "dev": "node --watch index.js",
+        "start": "node index.js"
+      }
+    }
+    ```
+
+    - `npm run dev` - Start with auto-restart on file changes (Node 20+ `--watch`)
+    - `npm start` - Start without auto-restart
+
+    **Backend runs on:** `http://localhost:3001`
+  </Tab>
+
+  <Tab title="Frontend">
+    ```json client/package.json
+    {
+      "scripts": {
+        "dev": "vite",
+        "build": "vite build",
+        "preview": "vite preview",
+        "lint": "eslint ."
+      }
+    }
+    ```
+
+    - `npm run dev` - Start Vite dev server with HMR
+    - `npm run build` - Build for production
+    - `npm run preview` - Preview production build
+    - `npm run lint` - Run ESLint
+
+    **Frontend runs on:** `http://localhost:5173`
+  </Tab>
+</Tabs>
+
+### Verify Installation
+
+<Steps>
+  <Step title="Check Backend">
+    ```bash Terminal
+    curl http://localhost:3001/api/status | jq
+    ```
+
+    Expected response:
+    ```json
+    {
+      "ok": true,
+      "riotRateLimited": false,
+      "totalRequests": 0,
+      "todayRequests": 0,
+      "playersCached": 0,
+      "rawDataCached": 0
+    }
+    ```
+  </Step>
+
+  <Step title="Check Frontend">
+    Open `http://localhost:5173` in your browser. You should see:
+    - Navigation tabs: Ranking, Hachitas, Users, Info
+    - "Cargando ladder..." loading state
+    - After ~30s, player data appears
+  </Step>
+
+  <Step title="Check Cache Files">
+    After the first refresh:
+
+    ```bash Terminal
+    ls -lh server/*.json
+    ```
+
+    Expected files:
+    - `friends.json` - Now includes auto-populated `puuid` values
+    - `ladder-cache.json` - Full ladder snapshot (~10-50 KB)
+    - `api-stats.json` - Request counter (~1 KB)
+  </Step>
+</Steps>
+
+## Production Deployment
+
+### Build Process
+
+<Steps>
+  <Step title="Build Frontend">
+    ```bash Terminal
+    cd client
+    npm run build
+    ```
+
+    This creates `client/dist/` with optimized assets:
+
+    ```plaintext client/dist/
+    client/dist/
+    ├── index.html
+    ├── assets/
+    │   ├── index-[hash].js
+    │   └── index-[hash].css
+    └── assets/icons/
+    ```
+  </Step>
+
+  <Step title="Configure Production Backend">
+    The backend automatically serves the frontend if `client/dist/index.html` exists:
+
+    ```javascript server/index.js:20-22,1261-1268
+    const CLIENT_DIST_DIR = path.join(__dirname, "..", "client", "dist");
+    const CLIENT_INDEX_FILE = path.join(CLIENT_DIST_DIR, "index.html");
+    const HAS_CLIENT_BUILD = fs.existsSync(CLIENT_INDEX_FILE);
+
+    // ...
+
+    if (HAS_CLIENT_BUILD) {
+      app.use(express.static(CLIENT_DIST_DIR));
+      
+      // SPA fallback for non-API routes
+      app.get(/^(?!\/api\/|\/assets\/).*/, (req, res, next) => {
+        if (req.method !== "GET") return next();
+        return res.sendFile(CLIENT_INDEX_FILE);
+      });
+    }
+    ```
+  </Step>
+
+  <Step title="Test Production Build Locally">
+    ```bash Terminal
+    # Build frontend
+    npm run build
+
+    # Start backend (serves both API + frontend)
+    npm start
+
+    # Access at http://localhost:3001
+    curl http://localhost:3001
+    ```
+  </Step>
+</Steps>
+
+### Deployment Options
+
+<Tabs>
+  <Tab title="Single Platform (Recommended)">
+    Deploy both frontend and backend as a single service on **Render**, **Railway**, or **Fly.io**.
+
+    ### Railway Example
+
+    1. **Create New Project** → Deploy from GitHub
+    2. **Configure Settings:**
+       - Root Directory: ` ` (leave empty - use repo root)
+       - Build Command: `npm run build`
+       - Start Command: `npm start`
+    3. **Add Environment Variables:**
+       ```bash
+       RIOT_API_KEY=RGAPI-your-key-here
+       ```
+    4. **Deploy**
+
+    <Note>
+    The root `package.json` defines `build` and `start` scripts that handle both frontend and backend.
+    </Note>
+
+    ### Railway Configuration
+
+    ```json railway.json (optional)
+    {
+      "$schema": "https://railway.app/railway.schema.json",
+      "build": {
+        "builder": "NIXPACKS"
+      },
+      "deploy": {
+        "startCommand": "npm start",
+        "restartPolicyType": "ON_FAILURE",
+        "restartPolicyMaxRetries": 10
+      }
+    }
+    ```
+
+    ### Render Example
+
+    **render.yaml:**
+    ```yaml
+    services:
+      - type: web
+        name: tullidos-ladder
+        env: node
+        plan: free
+        buildCommand: npm run build
+        startCommand: npm start
+        envVars:
+          - key: RIOT_API_KEY
+            sync: false
+    ```
+  </Tab>
+
+  <Tab title="Separate Frontend/Backend">
+    Deploy frontend and backend separately.
+
+    ### Frontend on Vercel
+
+    1. **Import repository** in Vercel
+    2. **Configure:**
+       - Root Directory: `client`
+       - Build Command: `npm run build`
+       - Output Directory: `dist`
+    3. **Environment Variable:**
+       ```bash
+       VITE_API_URL=https://your-backend.railway.app
+       ```
+
+    ### Backend on Railway/Render
+
+    1. **Configure:**
+       - Root Directory: ` ` (repo root)
+       - Build Command: `npm --prefix server install`
+       - Start Command: `npm --prefix server start`
+    2. **Environment Variables:**
+       ```bash
+       RIOT_API_KEY=RGAPI-your-key-here
+       PORT=3001
+       ```
+
+    <Warning>
+    When deploying separately, make sure to:
+    - Configure CORS if frontend/backend are on different domains
+    - Set `VITE_API_URL` in frontend environment
+    - Use HTTPS for production backends
+    </Warning>
+  </Tab>
+
+  <Tab title="Docker">
+    Use Docker for containerized deployment.
+
+    **Dockerfile:**
+    ```dockerfile
+    FROM node:20-alpine
+
+    WORKDIR /app
+
+    # Copy root package files
+    COPY package*.json ./
+
+    # Copy subproject package files
+    COPY server/package*.json ./server/
+    COPY client/package*.json ./client/
+
+    # Install all dependencies
+    RUN npm install
+
+    # Copy source code
+    COPY server/ ./server/
+    COPY client/ ./client/
+
+    # Build frontend
+    RUN npm run build
+
+    # Expose port
+    EXPOSE 3001
+
+    # Start server
+    CMD ["npm", "start"]
+    ```
+
+    **docker-compose.yml:**
+    ```yaml
+    version: '3.8'
+    services:
+      soloq-ladder:
+        build: .
+        ports:
+          - "3001:3001"
+        environment:
+          - RIOT_API_KEY=${RIOT_API_KEY}
+          - LADDER_CACHE_TTL_MS=60000
+        volumes:
+          - ./server/friends.json:/app/server/friends.json
+          - ladder-cache:/app/server/cache
+        restart: unless-stopped
+
+    volumes:
+      ladder-cache:
+    ```
+
+    **Usage:**
+    ```bash Terminal
+    # Build image
+    docker-compose build
+
+    # Start container
+    docker-compose up -d
+
+    # View logs
+    docker-compose logs -f
+    ```
+  </Tab>
+</Tabs>
+
+## Database & Persistence
+
+<Note>
+Tullidos SoloQ Ladder uses **file-based persistence** instead of a traditional database. This simplifies deployment but requires persistent storage.
+</Note>
+
+### Cache Files
+
+The backend creates three JSON files in `server/`:
+
+<CodeGroup>
+```json ladder-cache.json (Ladder Snapshot)
+{
+  "players": [...],
+  "rankedMatchesByPuuid": { ... },
+  "playerSnapshotByKey": { ... },
+  "rawDataByPuuid": { ... },
+  "dailyLpByDate": { ... },
+  "lpSnapshotByPlayer": { ... },
+  "refreshCursor": 4,
+  "lastUpdatedAt": "2026-03-13T10:30:00.000Z",
+  "lastError": null
+}
+```
+
+```json api-stats.json (Request Counters)
+{
+  "totalRiotRequests": 487,
+  "perDay": {
+    "2026-03-12": 203,
+    "2026-03-13": 284
+  },
+  "updatedAt": "2026-03-13T10:30:00.000Z"
+}
+```
+
+```json friends.json (Player List)
+[
+  {
+    "gameName": "Azpy",
+    "tagLine": "1337",
+    "puuid": "_89HyfW-MAxI2...",
+    "mote": "Azpy"
+  }
+]
+```
+</CodeGroup>
+
+### Persistence Strategy
+
+```javascript server/index.js:530-548
+function saveCacheToFile() {
+  try {
+    fs.writeFileSync(
+      CACHE_FILE,
+      JSON.stringify({
+        players: ladderCache.players,
+        rankedMatchesByPuuid: ladderCache.rankedMatchesByPuuid,
+        playerSnapshotByKey: ladderCache.playerSnapshotByKey,
+        rawDataByPuuid: ladderCache.rawDataByPuuid,
+        dailyLpByDate: ladderCache.dailyLpByDate,
+        lpSnapshotByPlayer: ladderCache.lpSnapshotByPlayer,
+        refreshCursor: ladderCache.refreshCursor,
+        lastUpdatedAt: ladderCache.lastUpdatedAt,
+        lastError: ladderCache.lastError,
+      }, null, 2)
+    );
+  } catch (err) {
+    console.warn("Could not save cache to file:", err.message);
+  }
+}
+```
+
+<Warning>
+**Important for Serverless/Ephemeral Environments:**
+
+Platforms like Vercel Functions or AWS Lambda have **ephemeral filesystems**. The cache files will be lost between invocations.
+
+For serverless deployment, you need to:
+1. Use a persistent volume (if supported)
+2. Migrate to a database (MongoDB, PostgreSQL, Redis)
+3. Deploy on a platform with persistent storage (Railway, Render, Fly.io)
+</Warning>
+
+## Advanced Configuration
+
+### Custom Region/Platform
+
+The backend is hardcoded to EU West:
+
+```javascript server/index.js:23-24
+const REGION = "europe";
+const PLATFORM = "euw1";
+```
+
+To change regions, edit these constants:
+
+```javascript
+// North America
+const REGION = "americas";
+const PLATFORM = "na1";
+
+// Korea
+const REGION = "asia";
+const PLATFORM = "kr";
+
+// See: https://developer.riotgames.com/apis#match-v5
+```
+
+### Adjust Rate Limiting
+
+```javascript server/index.js:30-35
+const RATE_WINDOW_LIMITS = [
+  { count: 18, windowMs: 1_000 },    // 18 requests per second
+  { count: 90, windowMs: 120_000 },  // 90 requests per 2 minutes
+];
+```
+
+<Tip>
+If you have a **production API key** with higher limits, adjust these values accordingly. Personal API keys are usually 20/1s and 100/2min.
+</Tip>
+
+### Incremental Refresh Tuning
+
+```bash server/.env
+# Refresh 2 friends per cycle (default)
+FRIENDS_PER_REFRESH=2
+
+# Ladder refresh every 60 seconds
+LADDER_CACHE_TTL_MS=60000
+```
+
+With 16 friends and `FRIENDS_PER_REFRESH=2`:
+- Full rotation takes 8 cycles
+- At 60s per cycle = **8 minutes** for complete refresh
+
+To refresh all friends every minute:
+```bash
+FRIENDS_PER_REFRESH=16  # Warning: May hit rate limits!
+```
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Module not found errors">
+    **Symptom:** `Cannot find module 'express'` or similar
+
+    **Solution:**
+    ```bash
+    # Reinstall all dependencies
+    rm -rf node_modules server/node_modules client/node_modules
+    npm install
+    ```
+  </Accordion>
+
+  <Accordion title="Port already in use">
+    **Symptom:** `Error: listen EADDRINUSE: address already in use :::3001`
+
+    **Solution:**
+    ```bash
+    # Find process using port 3001
+    lsof -i :3001
+
+    # Kill the process
+    kill -9 <PID>
+
+    # Or use a different port
+    PORT=3002 npm run dev
+    ```
+  </Accordion>
+
+  <Accordion title="Riot API 403 Forbidden">
+    **Symptom:** `Riot API 403: Forbidden`
+
+    **Causes:**
+    - API key expired (development keys expire after 24 hours)
+    - API key is invalid
+    - API key has wrong permissions
+
+    **Solution:**
+    1. Generate a new API key at [developer.riotgames.com](https://developer.riotgames.com/)
+    2. Update `server/.env`
+    3. Restart backend
+  </Accordion>
+
+  <Accordion title="Cache not persisting">
+    **Symptom:** Data resets every time server restarts
+
+    **Causes:**
+    - File permissions issue
+    - Running in ephemeral environment (Docker without volumes, serverless)
+
+    **Solution:**
+    ```bash
+    # Check file permissions
+    ls -la server/*.json
+
+    # Ensure server directory is writable
+    chmod 755 server/
+    chmod 644 server/*.json
+    ```
+
+    For Docker, mount a volume:
+    ```yaml
+    volumes:
+      - ./server:/app/server
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="API Documentation" icon="book-open" href="/api/ladder">
+    Explore all backend endpoints and data structures
+  </Card>
+  
+  <Card title="Configuration Reference" icon="gear" href="/configuration/environment">
+    Deep dive into all configuration options
+  </Card>
+  
+  <Card title="Deployment Guide" icon="rocket" href="/deployment/overview">
+    Platform-specific deployment instructions
+  </Card>
+  
+  <Card title="GitHub Repository" icon="github" href="https://github.com/Azpyrx/TullidosSoloqLadder">
+    View the source code and contribute
+  </Card>
+</CardGroup>

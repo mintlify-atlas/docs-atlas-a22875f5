@@ -1,0 +1,95 @@
+---
+title: Deployment Overview
+description: Overview of deployment options for Tullidos SoloQ Ladder
+---
+
+## Architecture
+
+Tullidos SoloQ Ladder is designed to be deployed as a **single unified service** that serves both the frontend and backend:
+
+- **Backend**: Express.js API serving endpoints at `/api/*`
+- **Frontend**: React + Vite application served as static files from `client/dist`
+- **Single Domain**: The backend serves both the API and the compiled frontend, eliminating CORS issues
+
+## Monorepo Structure
+
+The project uses a monorepo structure:
+
+```
+tullidos-soloq-ladder/
+├── client/          # React + Vite frontend
+├── server/          # Express.js backend
+└── package.json     # Root package with build orchestration
+```
+
+## Build Process
+
+The root `package.json` orchestrates the entire build:
+
+```json
+{
+  "scripts": {
+    "postinstall": "npm --prefix server install && npm --prefix client install",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server run start"
+  }
+}
+```
+
+### Build Steps
+
+1. **Install**: `npm install` runs `postinstall` which installs dependencies for both client and server
+2. **Build**: `npm run build` compiles the React frontend to `client/dist`
+3. **Start**: `npm start` starts the Express server, which serves both API and static frontend files
+
+## Requirements
+
+### System Requirements
+
+- **Node.js**: Version 20 or higher
+- **npm**: Version 10 or higher recommended
+- **Platform**: Non-serverless environment (persistent process required)
+
+### Environment Variables
+
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `RIOT_API_KEY` | Yes | - | Your Riot Games API key |
+| `PORT` | No | 3001 | Server port (usually injected by platform) |
+| `LADDER_CACHE_TTL_MS` | No | 60000 | Ladder cache TTL in milliseconds |
+| `MATCH_SYNC_TTL_MS` | No | 1800000 | Match sync TTL in milliseconds |
+| `RATE_LIMIT_FALLBACK_MS` | No | 60000 | Rate limit fallback in milliseconds |
+| `FRIENDS_PER_REFRESH` | No | 2 | Number of friends to refresh per cycle |
+
+## Why Not Serverless?
+
+The backend uses:
+- **Persistent process**: Express server needs to run continuously
+- **Local file cache**: Stores `ladder-cache.json` and `api-stats.json` on disk
+- **Rate limiting**: Maintains state across requests to respect Riot API limits
+
+For these reasons, **platforms with persistent storage** (Railway, Render, Fly.io) are recommended over pure serverless solutions.
+
+## Deployment Options
+
+### Recommended: Single Service Deployment
+
+Deploy frontend and backend together on:
+- [Railway](/deployment/railway) - Fastest setup, great DX
+- [Render](/deployment/render) - Generous free tier
+- [Docker](/deployment/docker) - Maximum control and portability
+
+### Alternative: Separate Deployments
+
+You can deploy frontend and backend separately:
+- **Frontend**: Vercel, Netlify, or any static host
+- **Backend**: Railway, Render, or Fly.io
+- **Configuration**: Set `VITE_API_URL` environment variable in frontend to point to your backend URL
+
+<Warning>
+When deploying separately, you'll need to configure CORS and manage API URLs. The single service approach is simpler and recommended.
+</Warning>
+
+## Quick Start
+
+For the fastest deployment, follow the [Railway guide](/deployment/railway) which can get you live in under 5 minutes.

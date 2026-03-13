@@ -1,0 +1,331 @@
+---
+title: API Design
+description: Express REST API architecture and design patterns
+---
+
+The backend implements a RESTful API using Express.js with a focus on caching, error handling, and graceful degradation.
+
+## Application Setup
+
+The server initializes with essential middleware and configuration:
+
+```javascript
+const app = express();
+
+app.use(cors());
+app.use(express.json());
+app.use(express.static(path.join(__dirname, "public")));
+
+const PORT = process.env.PORT || 3001;
+```
+
+**Location**: `server/index.js:9-15`
+
+### CORS Configuration
+
+CORS is enabled globally without restrictions to allow frontend access from any origin during development.
+
+### Static File Serving
+
+The server serves:
+- Static assets from the `public` directory
+- Built client application from `../client/dist` when available
+- SPA fallback routing for non-API routes
+
+## API Endpoints
+
+### GET /api/player
+
+Fetch ranked data for a specific player by Riot ID.
+
+**Query Parameters**:
+- `gameName` (string, default: "Azpy")
+- `tagLine` (string, default: "1337")
+
+**Response**:
+```json
+{
+  "riotId": "Azpy#1337",
+  "gameName": "Azpy",
+  "tagLine": "1337",
+  "puuid": "...",
+  "profileIconId": 5379,
+  "summonerLevel": 437,
+  "soloq": {
+    "tier": "DIAMOND",
+    "rank": "II",
+    "leaguePoints": 67
+  },
+  "flex": null,
+  "topChampions": ["Thresh", "Nautilus", "Leona"],
+  "mainRole": "SUPPORT"
+}
+```
+
+**Location**: `server/index.js:1061-1073`
+
+### GET /api/ladder
+
+Retrieve the complete ranked ladder with all tracked friends.
+
+**Response**:
+```json
+{
+  "players": [...],
+  "cachedAt": "2026-03-13T10:30:00.000Z",
+  "cacheTtlMs": 60000,
+  "stale": false,
+  "lastError": null,
+  "ddragonVersion": "14.24.1"
+}
+```
+
+**Behavior**:
+- Returns cached data if available and fresh
+- Triggers refresh if cache is empty
+- Waits for ongoing refresh if one is in progress
+- Falls back to stale cache on error with `stale: true`
+
+**Location**: `server/index.js:1076-1125`
+
+### GET /api/friends
+
+List all tracked friends from `friends.json`.
+
+**Response**:
+```json
+[
+  {
+    "gameName": "Azpy",
+    "tagLine": "1337",
+    "puuid": "...",
+    "mote": "🎮"
+  }
+]
+```
+
+**Location**: `server/index.js:1128-1135`
+
+### POST /api/friends
+
+Add a new friend to the tracking list.
+
+**Request Body**:
+```json
+{
+  "gameName": "PlayerName",
+  "tagLine": "EUW",
+  "emote": "🏆"
+}
+```
+
+**Response**:
+- `201 Created` on success
+- `400 Bad Request` if gameName or tagLine missing
+- `409 Conflict` if player already tracked
+
+**Side Effects**:
+- Updates `friends.json`
+- Triggers immediate ladder cache refresh
+
+**Location**: `server/index.js:1138-1174`
+
+### DELETE /api/friends/:gameName/:tagLine
+
+Remove a friend from tracking.
+
+**Response**:
+- `200 OK` with `{ ok: true }`
+- `404 Not Found` if player not in list
+- `500 Internal Server Error` on file read failure
+
+**Side Effects**:
+- Updates `friends.json`
+- Triggers immediate ladder cache refresh
+
+**Location**: `server/index.js:1177-1204`
+
+### GET /api/status
+
+Debug endpoint exposing internal state and metrics.
+
+**Response**:
+```json
+{
+  "ok": true,
+  "riotRateLimited": false,
+  "rateLimitSecondsLeft": 0,
+  "recentRequests1s": 3,
+  "recentRequests2min": 42,
+  "totalRequests": 15847,
+  "todayRequests": 234,
+  "budgetRemaining1s": 15,
+  "budgetRemaining2min": 48,
+  "refreshCursor": 12,
+  "playersCached": 37,
+  "rawDataCached": 37,
+  "dailyHighlights": {
+    "date": "2026-03-13",
+    "bestSoloqGain": { "player": "Azpy#1337", "deltaLp": 45 },
+    "bestFlexGain": { "player": "Player#TAG", "deltaLp": 32 },
+    "worstSoloqLoss": { "player": "Unlucky#EUW", "deltaLp": -28 }
+  },
+  "isRefreshing": false,
+  "lastUpdatedAt": "2026-03-13T10:30:00.000Z",
+  "lastError": null
+}
+```
+
+**Location**: `server/index.js:1206-1244`
+
+### POST /api/force-refresh
+
+Manually trigger a full ladder refresh for all players.
+
+**Behavior**:
+- Returns immediately if refresh already in progress
+- Forces complete refresh of all friends
+- Resets refresh cursor to 0
+
+**Location**: `server/index.js:1247-1259`
+
+## Error Handling
+
+### Validation Errors
+
+Endpoints validate input and return appropriate 4xx status codes:
+
+```javascript
+if (!gameName || !tagLine) {
+  return res.status(400).json({ error: "gameName y tagLine son obligatorios" });
+}
+```
+
+### API Key Check
+
+Endpoints requiring Riot API access check for key presence:
+
+```javascript
+if (!RIOT_API_KEY) {
+  return res.status(500).json({ error: "Falta RIOT_API_KEY en server/.env" });
+}
+```
+
+**Location**: `server/index.js:1062-1064`
+
+### Graceful Degradation
+
+The `/api/ladder` endpoint returns stale cached data when refresh fails:
+
+```javascript
+if (ladderCache.players.length > 0) {
+  return res.json({
+    players: playersWithEmotes,
+    cachedAt: ladderCache.lastUpdatedAt,
+    stale: true,
+    lastError: err.message
+  });
+}
+```
+
+**Location**: `server/index.js:1112-1122`
+
+### 404 Handler
+
+Unknown routes return structured error:
+
+```javascript
+app.use((req, res) => {
+  res.status(404).json({ error: `Ruta no encontrada: ${req.method} ${req.originalUrl}` });
+});
+```
+
+**Location**: `server/index.js:1271-1273`
+
+## Response Formats
+
+### Success Response
+
+Most endpoints return JSON with structured data:
+
+```json
+{
+  "ok": true,
+  "message": "Operation completed",
+  "data": { ... }
+}
+```
+
+### Error Response
+
+Errors use consistent format:
+
+```json
+{
+  "error": "Descriptive error message"
+}
+```
+
+### Stale Data Indicator
+
+Ladder responses include staleness flag:
+
+```json
+{
+  "players": [...],
+  "stale": true,
+  "lastError": "Rate limit exceeded"
+}
+```
+
+## SPA Routing
+
+When client build exists, the server implements SPA fallback:
+
+```javascript
+app.get(/^(?!\/api\/|\/assets\/).*/, (req, res, next) => {
+  if (req.method !== "GET") return next();
+  return res.sendFile(CLIENT_INDEX_FILE);
+});
+```
+
+**Behavior**:
+- Serves `index.html` for non-API GET requests
+- Preserves API routes under `/api/`
+- Allows static assets under `/assets/`
+
+**Location**: `server/index.js:1265-1268`
+
+## Server Lifecycle
+
+### Startup
+
+```javascript
+app.listen(PORT, () => {
+  console.log(`Server running on http://localhost:${PORT}`);
+});
+
+fetchDDragonVersion().catch(console.error);
+loadApiStatsFromFile();
+const cacheLoadedFromDisk = loadCacheFromFile();
+```
+
+**Location**: `server/index.js:1275-1284`
+
+### Shutdown
+
+Graceful shutdown handlers persist API stats:
+
+```javascript
+process.on("SIGINT", () => {
+  saveApiStatsToFile(true);
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  saveApiStatsToFile(true);
+  process.exit(0);
+});
+```
+
+**Location**: `server/index.js:1306-1314`

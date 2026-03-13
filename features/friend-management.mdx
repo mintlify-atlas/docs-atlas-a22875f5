@@ -1,0 +1,293 @@
+---
+title: Friend Management
+description: Add, remove, and customize friends with emotes
+---
+
+The friend management system allows you to maintain a list of League players to track on the ladder.
+
+## Friends Data Structure
+
+Friends are stored in `server/friends.json`:
+
+```json
+[
+  {
+    "gameName": "PlayerOne",
+    "tagLine": "EUW",
+    "puuid": "abc123...",
+    "mote": "🔥"
+  },
+  {
+    "gameName": "AnotherPlayer",
+    "tagLine": "1234",
+    "puuid": "def456..."
+  }
+]
+```
+
+<Note>
+  The `puuid` is automatically resolved and saved after the first successful API fetch. This allows the tracker to handle Riot ID changes automatically.
+</Note>
+
+## Adding Friends
+
+Add a new friend via the API:
+
+```bash
+curl -X POST http://localhost:3001/api/friends \
+  -H "Content-Type: application/json" \
+  -d '{
+    "gameName": "NewPlayer",
+    "tagLine": "0001",
+    "mote": "⚡"
+  }'
+```
+
+### Server Logic
+
+```javascript server/index.js
+app.post("/api/friends", async (req, res) => {
+  const { gameName, tagLine, emote, mote } = req.body;
+  if (!gameName || !tagLine) {
+    return res.status(400).json({ error: "gameName y tagLine son obligatorios" });
+  }
+  let friends;
+  try {
+    friends = JSON.parse(fs.readFileSync(FRIENDS_FILE, "utf8"));
+  } catch {
+    friends = [];
+  }
+  const exists = friends.some(
+    (f) => f.gameName.toLowerCase() === gameName.toLowerCase() &&
+           f.tagLine.toLowerCase() === tagLine.toLowerCase()
+  );
+  if (exists) {
+    return res.status(409).json({ error: "Ese jugador ya está en la lista" });
+  }
+  const friend = { gameName, tagLine };
+  const friendEmote =
+    (typeof emote === "string" && emote.trim())
+      ? emote.trim()
+      : (typeof mote === "string" && mote.trim() ? mote.trim() : null);
+  if (friendEmote) friend.mote = friendEmote;
+  friends.push(friend);
+  fs.writeFileSync(FRIENDS_FILE, JSON.stringify(friends, null, 2));
+
+  try {
+    if (RIOT_API_KEY) {
+      await refreshLadderCache();
+    }
+  } catch (error) {
+    console.error("ERROR refreshing ladder cache after add:", error.message);
+  }
+
+  res.status(201).json({ ok: true });
+});
+```
+
+<Info>
+  After adding a friend, the ladder cache is automatically refreshed to fetch their data.
+</Info>
+
+## Removing Friends
+
+Delete a friend by their Riot ID:
+
+```bash
+curl -X DELETE http://localhost:3001/api/friends/PlayerName/TAG
+```
+
+### Server Logic
+
+```javascript server/index.js
+app.delete("/api/friends/:gameName/:tagLine", async (req, res) => {
+  const { gameName, tagLine } = req.params;
+  let friends;
+  try {
+    friends = readFriends();
+  } catch {
+    return res.status(500).json({ error: "No se pudo leer friends.json" });
+  }
+  const before = friends.length;
+  friends = friends.filter(
+    (f) => !(f.gameName.toLowerCase() === gameName.toLowerCase() &&
+             f.tagLine.toLowerCase() === tagLine.toLowerCase())
+  );
+  if (friends.length === before) {
+    return res.status(404).json({ error: "Jugador no encontrado" });
+  }
+  fs.writeFileSync(FRIENDS_FILE, JSON.stringify(friends, null, 2));
+
+  try {
+    if (RIOT_API_KEY) {
+      await refreshLadderCache();
+    }
+  } catch (error) {
+    console.error("ERROR refreshing ladder cache after delete:", error.message);
+  }
+
+  res.json({ ok: true });
+});
+```
+
+## Listing Friends
+
+Get all tracked friends:
+
+```bash
+curl http://localhost:3001/api/friends
+```
+
+Response:
+```json
+[
+  {
+    "gameName": "PlayerOne",
+    "tagLine": "EUW",
+    "puuid": "abc123...",
+    "mote": "🔥"
+  },
+  {
+    "gameName": "PlayerTwo",
+    "tagLine": "0001"
+  }
+]
+```
+
+## Custom Emotes
+
+Emotes (called `mote` internally) are custom labels displayed next to player names in the UI.
+
+### Emote Resolution Logic
+
+The server applies emotes using multiple fallback strategies:
+
+```javascript server/index.js
+function applyFriendEmotesToPlayers(players, friends) {
+  if (!Array.isArray(players) || players.length === 0) return players;
+  const { byPuuid, byRiotId } = buildFriendEmoteMaps(friends);
+
+  return players.map((player) => {
+    const existingEmote = getFriendEmote(player);
+    const byPuuidEmote = player?.puuid ? byPuuid.get(player.puuid) : null;
+
+    const playerRiotId = player?.riotId
+      ? String(player.riotId).trim().toLowerCase()
+      : normalizeRiotId(player?.gameName, player?.tagLine);
+    const byRiotIdEmote = playerRiotId ? byRiotId.get(playerRiotId) : null;
+
+    const resolvedEmote = existingEmote || byPuuidEmote || byRiotIdEmote || null;
+    if (resolvedEmote === player?.emote) return player;
+    return { ...player, emote: resolvedEmote };
+  });
+}
+```
+
+This ensures emotes persist even if a player changes their Riot ID.
+
+### Frontend Display
+
+```jsx client/src/App.jsx
+function formatMoteDisplay(mote) {
+  const clean = String(mote || "").replace(/\s+/g, " ").trim();
+  if (!clean) return "";
+  return clean
+    .split(" ")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+function shouldRenderRiotId(mote, riotId) {
+  const cleanMote = String(mote || "").trim().toLowerCase();
+  const cleanId = String(riotId || "").trim().toLowerCase();
+  const cleanIdNameOnly = cleanId.split("#")[0];
+  if (!cleanMote) return true;
+  return cleanMote !== cleanId && cleanMote !== cleanIdNameOnly;
+}
+
+// In player row rendering:
+{p.emote && <span className="riot-emote">{formatMoteDisplay(p.emote)}</span>}
+{shouldRenderRiotId(p.emote, p.riotId) && <span className="riot-id">{p.riotId}</span>}
+```
+
+If the emote matches the Riot ID, only the emote is shown to avoid redundancy.
+
+## Automatic PUUID Resolution
+
+When the ladder refreshes, it updates the friends list with resolved PUUIDs:
+
+```javascript server/index.js
+const { players, nextFriends } = await buildLadderSnapshot(friends, previousPlayers, friendIndexesToRefresh);
+
+// nextFriends now includes puuid from API response
+try {
+  fs.writeFileSync(FRIENDS_FILE, JSON.stringify(nextFriends, null, 2));
+} catch (err) {
+  console.warn("Could not update friends.json with puuid mapping:", err.message);
+}
+```
+
+This allows the app to:
+- Track players by immutable PUUID
+- Automatically detect when a player changes their Riot ID
+- Continue tracking them without manual intervention
+
+<Tip>
+  After a Riot ID change, the app will detect the new name on the next refresh and update `friends.json` automatically.
+</Tip>
+
+## Friends Cache Keys
+
+The server uses both PUUID and Riot ID as cache keys:
+
+```javascript server/index.js
+function getDailyPlayerKey(player) {
+  if (player?.puuid) return `puuid:${player.puuid}`;
+  if (player?.riotId) return `riot:${String(player.riotId).toLowerCase()}`;
+  return null;
+}
+
+function buildFriendKeys(friend, resolvedPlayer) {
+  const keys = new Set();
+  const friendKey = getFriendCacheKey(friend);
+  if (friendKey) keys.add(friendKey);
+
+  if (resolvedPlayer?.puuid) keys.add(`puuid:${resolvedPlayer.puuid}`);
+  const resolvedRiotId = normalizeRiotId(resolvedPlayer?.gameName, resolvedPlayer?.tagLine);
+  if (resolvedRiotId) keys.add(`riot:${resolvedRiotId}`);
+
+  return Array.from(keys);
+}
+```
+
+This dual-key approach ensures cache lookups work even during Riot ID transitions.
+
+<Card title="Example" icon="lightbulb">
+  A player changes from `OldName#123` to `NewName#456`. The app:
+  1. Stores both keys in cache: `riot:oldname#123` and `puuid:abc123...`
+  2. On next refresh, resolves `puuid:abc123...` to new Riot ID
+  3. Updates `friends.json` with `NewName#456`
+  4. Daily LP tracking continues uninterrupted
+</Card>
+
+## Bulk Import (Manual)
+
+To add many friends at once, edit `server/friends.json` directly:
+
+```json
+[
+  { "gameName": "Player1", "tagLine": "EUW" },
+  { "gameName": "Player2", "tagLine": "0001" },
+  { "gameName": "Player3", "tagLine": "1234", "mote": "🔥" }
+]
+```
+
+Then restart the server or trigger a force refresh:
+
+```bash
+curl -X POST http://localhost:3001/api/force-refresh
+```
+
+<Warning>
+  Make sure the JSON is valid before restarting, or the server will fail to load the friends list.
+</Warning>

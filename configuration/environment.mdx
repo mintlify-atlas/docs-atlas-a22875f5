@@ -1,0 +1,95 @@
+---
+title: Environment Variables
+description: Configure your SoloQ Ladder instance with environment variables
+---
+
+All configuration is managed through environment variables in `server/.env`. Copy `server/.env.example` to get started.
+
+## Required Variables
+
+<ParamField path="RIOT_API_KEY" type="string" required>
+  Your Riot Games API key. Get one from the [Riot Developer Portal](https://developer.riotgames.com/).
+  
+  The application will not start making API calls without this key.
+</ParamField>
+
+## Server Configuration
+
+<ParamField path="PORT" type="number" default="3001">
+  Port number where the Express server listens.
+  
+  ```bash
+  PORT=3001
+  ```
+</ParamField>
+
+## Cache Settings
+
+<ParamField path="LADDER_CACHE_TTL_MS" type="number" default="60000">
+  Time-to-live for the ladder cache in milliseconds. This controls how often the server automatically refreshes player data in the background.
+  
+  - Default: `60000` (1 minute)
+  - Set higher to reduce API calls
+  - Set lower for more up-to-date data
+  
+  ```bash
+  LADDER_CACHE_TTL_MS=60000
+  ```
+</ParamField>
+
+<ParamField path="MATCH_SYNC_TTL_MS" type="number" default="1800000">
+  How long to consider cached match history fresh before fetching new matches.
+  
+  - Default: `1800000` (30 minutes)
+  - Used for champion pool and role detection
+  
+  ```bash
+  MATCH_SYNC_TTL_MS=1800000
+  ```
+</ParamField>
+
+## Rate Limiting
+
+<ParamField path="RATE_LIMIT_FALLBACK_MS" type="number" default="60000">
+  Fallback wait time when a rate limit (429) response is received without a `retry-after` header.
+  
+  - Default: `60000` (1 minute)
+  - Only used when Riot API doesn't specify retry duration
+  
+  ```bash
+  RATE_LIMIT_FALLBACK_MS=60000
+  ```
+</ParamField>
+
+## Refresh Strategy
+
+<ParamField path="FRIENDS_PER_REFRESH" type="number" default="2">
+  Number of friends to refresh per background refresh cycle. The server uses a round-robin cursor to spread API calls over time.
+  
+  - Default: `2`
+  - Minimum: `1`
+  - Higher values = faster full updates but more API calls per cycle
+  - Lower values = slower updates but better rate limit management
+  
+  ```bash
+  FRIENDS_PER_REFRESH=2
+  ```
+</ParamField>
+
+## Example Configuration
+
+```bash server/.env
+PORT=3001
+RIOT_API_KEY=RGAPI-your-key-here
+LADDER_CACHE_TTL_MS=60000
+MATCH_SYNC_TTL_MS=1800000
+RATE_LIMIT_FALLBACK_MS=60000
+FRIENDS_PER_REFRESH=2
+```
+
+## Notes
+
+- All time values are in milliseconds
+- The server reads `.env` from the `server/` directory
+- Changes require a server restart to take effect
+- See [Caching Strategy](/configuration/caching) for how these settings affect cache behavior

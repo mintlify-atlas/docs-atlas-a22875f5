@@ -1,0 +1,267 @@
+---
+title: 'Status'
+description: 'Server health, rate limits, and daily highlights'
+---
+
+The Status API provides comprehensive information about the server's health, Riot API rate limiting status, cache statistics, and daily LP highlights.
+
+## GET /api/status
+
+Returns detailed server status and statistics.
+
+### Response
+
+<ResponseField name="ok" type="boolean" required>
+  Always `true` if the endpoint is reachable
+</ResponseField>
+
+<ResponseField name="riotRateLimited" type="boolean" required>
+  Whether the server is currently rate-limited by Riot API
+</ResponseField>
+
+<ResponseField name="riotRateLimitedUntil" type="number" required>
+  Unix timestamp (ms) when rate limit expires (0 if not rate limited)
+</ResponseField>
+
+<ResponseField name="rateLimitSecondsLeft" type="number" required>
+  Seconds remaining until rate limit expires
+</ResponseField>
+
+<ResponseField name="recentRequests1s" type="number" required>
+  Number of Riot API requests in the last 1 second
+</ResponseField>
+
+<ResponseField name="recentRequests2min" type="number" required>
+  Number of Riot API requests in the last 2 minutes
+</ResponseField>
+
+<ResponseField name="totalRequests" type="number" required>
+  Total Riot API requests since server start (persisted across restarts)
+</ResponseField>
+
+<ResponseField name="todayRequests" type="number" required>
+  Riot API requests made today
+</ResponseField>
+
+<ResponseField name="budgetRemaining1s" type="number" required>
+  Remaining request budget in 1-second window (18 max)
+</ResponseField>
+
+<ResponseField name="budgetRemaining2min" type="number" required>
+  Remaining request budget in 2-minute window (90 max)
+</ResponseField>
+
+<ResponseField name="refreshCursor" type="number" required>
+  Current position in the friends list for incremental refreshes
+</ResponseField>
+
+<ResponseField name="playersCached" type="number" required>
+  Number of player snapshots in cache
+</ResponseField>
+
+<ResponseField name="rawDataCached" type="number" required>
+  Number of raw API data entries cached by PUUID
+</ResponseField>
+
+<ResponseField name="dailyHighlights" type="object" required>
+  Daily LP gain/loss statistics
+  
+  <Expandable title="Daily highlights properties">
+    <ResponseField name="date" type="string">
+      Date in YYYY-MM-DD format
+    </ResponseField>
+    
+    <ResponseField name="bestSoloqGain" type="object">
+      Player with highest Solo/Duo LP gain today
+      
+      <Expandable title="Highlight object properties">
+        <ResponseField name="player" type="string">
+          Player's Riot ID
+        </ResponseField>
+        
+        <ResponseField name="deltaLp" type="number">
+          LP change (positive for gains)
+        </ResponseField>
+        
+        <ResponseField name="currentLp" type="number">
+          Current LP in the queue
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="bestFlexGain" type="object">
+      Player with highest Flex LP gain today (same structure as `bestSoloqGain`)
+    </ResponseField>
+    
+    <ResponseField name="worstSoloqLoss" type="object">
+      Player with highest Solo/Duo LP loss today (same structure as `bestSoloqGain`)
+    </ResponseField>
+    
+    <ResponseField name="bestOverallGain" type="object">
+      Player with highest combined LP gain across both queues
+      
+      <Expandable title="Overall highlight properties">
+        <ResponseField name="player" type="string">
+          Player's Riot ID
+        </ResponseField>
+        
+        <ResponseField name="deltaLp" type="number">
+          Combined LP change from both queues
+        </ResponseField>
+      </Expandable>
+    </ResponseField>
+    
+    <ResponseField name="worstOverallLoss" type="object">
+      Player with highest combined LP loss (same structure as `bestOverallGain`)
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<ResponseField name="isRefreshing" type="boolean" required>
+  Whether a cache refresh is currently in progress
+</ResponseField>
+
+<ResponseField name="lastUpdatedAt" type="string">
+  ISO 8601 timestamp of last successful cache update
+</ResponseField>
+
+<ResponseField name="lastError" type="string">
+  Last error message if cache refresh failed
+</ResponseField>
+
+<ResponseField name="timestamp" type="string" required>
+  Current server time in ISO 8601 format
+</ResponseField>
+
+### Example Request
+
+```bash
+curl http://localhost:3001/api/status
+```
+
+### Example Response
+
+```json
+{
+  "ok": true,
+  "riotRateLimited": false,
+  "riotRateLimitedUntil": 0,
+  "rateLimitSecondsLeft": 0,
+  "recentRequests1s": 3,
+  "recentRequests2min": 45,
+  "totalRequests": 12847,
+  "todayRequests": 342,
+  "budgetRemaining1s": 15,
+  "budgetRemaining2min": 45,
+  "refreshCursor": 4,
+  "playersCached": 12,
+  "rawDataCached": 12,
+  "dailyHighlights": {
+    "date": "2026-03-13",
+    "bestSoloqGain": {
+      "player": "Azpy#1337",
+      "deltaLp": 87,
+      "currentLp": 234
+    },
+    "bestFlexGain": {
+      "player": "Player2#EUW",
+      "deltaLp": 56,
+      "currentLp": 189
+    },
+    "worstSoloqLoss": {
+      "player": "Player3#NA1",
+      "deltaLp": -43,
+      "currentLp": 12
+    },
+    "bestOverallGain": {
+      "player": "Azpy#1337",
+      "deltaLp": 87
+    },
+    "worstOverallLoss": {
+      "player": "Player3#NA1",
+      "deltaLp": -43
+    }
+  },
+  "isRefreshing": false,
+  "lastUpdatedAt": "2026-03-13T10:30:00.000Z",
+  "lastError": null,
+  "timestamp": "2026-03-13T10:35:22.145Z"
+}
+```
+
+### Notes
+
+- Rate limits are proactive: the server throttles requests to stay within Riot's limits (18 req/1s, 90 req/2min)
+- Daily highlights track LP changes throughout the day, resetting at midnight
+- If no LP changes occurred today, highlights default to current top/bottom players
+- The last 14 days of daily LP data are retained
+- API stats persist across server restarts via `api-stats.json`
+
+---
+
+## POST /api/force-refresh
+
+Force an immediate full refresh of all players in the friends list.
+
+### Response
+
+<ResponseField name="ok" type="boolean" required>
+  Success indicator
+</ResponseField>
+
+<ResponseField name="message" type="string" required>
+  Status message describing what happened
+</ResponseField>
+
+<ResponseField name="playersCount" type="number" required>
+  Number of players in the ladder after refresh
+</ResponseField>
+
+### Example Request
+
+```bash
+curl -X POST http://localhost:3001/api/force-refresh
+```
+
+### Example Response
+
+```json
+{
+  "ok": true,
+  "message": "Refresh completado",
+  "playersCount": 12
+}
+```
+
+**Refresh Already In Progress**
+```json
+{
+  "ok": true,
+  "message": "Ya había un refresh en curso, completado",
+  "playersCount": 12
+}
+```
+
+### Error Response
+
+**Missing API Key**
+```json
+{
+  "error": "Sin RIOT_API_KEY"
+}
+```
+
+**Refresh Failed**
+```json
+{
+  "error": "Riot API rate limit exceeded"
+}
+```
+
+### Notes
+
+- This endpoint refreshes ALL players immediately, ignoring the incremental refresh cursor
+- Use sparingly to avoid exhausting rate limits
+- If a refresh is already in progress, the endpoint waits for it to complete
+- The normal refresh cycle only updates a subset of players per interval (configured by `FRIENDS_PER_REFRESH`)
+- After force refresh, the refresh cursor resets to 0

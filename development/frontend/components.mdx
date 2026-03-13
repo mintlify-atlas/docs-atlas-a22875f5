@@ -1,0 +1,315 @@
+---
+title: "Frontend Components"
+description: "Component architecture and usage in the Tullidos SoloQ Ladder application"
+---
+
+## Overview
+
+The frontend is built with React 19 and uses a component-based architecture. Components are located in `client/src/components/` and handle everything from navigation to animations.
+
+## Core Components
+
+### AppLayout
+
+**Location**: `client/src/components/AppLayout.jsx`
+
+The main layout wrapper that provides consistent navigation and structure across all pages.
+
+```jsx
+export default function AppLayout({ onTabChange, activeTab, children }) {
+  const items = TABS.map((tab) => ({
+    label: tab.label,
+    link: "#",
+    ariaLabel: tab.label,
+    onClick: () => onTabChange(tab.id),
+  }));
+
+  return (
+    <>
+      <StaggeredMenu
+        isFixed
+        items={items}
+        colors={["#2b6a4f", "#b6893f"]}
+        accentColor="#b6893f"
+        menuButtonColor="#e8eaed"
+        openMenuButtonColor="#fff"
+        displaySocials={false}
+        displayItemNumbering
+        logoAlt="Tullidos"
+      />
+      <div className="page-content">{children}</div>
+      {activeTab !== "users" && <FooterCarousel />}
+    </>
+  );
+}
+```
+
+**Props**:
+- `onTabChange` - Function called when tab changes
+- `activeTab` - Currently active tab ID
+- `children` - Page content to render
+
+**Features**:
+- Manages tab navigation (Ranking, Usuarios, Informacion)
+- Integrates StaggeredMenu for navigation
+- Conditionally renders FooterCarousel
+- Fixed positioning for menu
+
+---
+
+### StaggeredMenu
+
+**Location**: `client/src/components/StaggeredMenu.jsx`
+
+An animated navigation menu with GSAP-powered staggered layer animations.
+
+```jsx
+export const StaggeredMenu = ({
+  position = 'right',
+  colors = ['#B19EEF', '#5227FF'],
+  items = [],
+  displayItemNumbering = true,
+  isFixed = false,
+  // ...other props
+}) => {
+  // Menu implementation with GSAP animations
+};
+```
+
+**Key Props**:
+- `position` - Menu position ("left" or "right", default: "right")
+- `colors` - Array of background colors for layered effect
+- `items` - Menu items with label, link, onClick
+- `displayItemNumbering` - Show numbered items (default: true)
+- `isFixed` - Fixed positioning (default: false)
+- `menuButtonColor` - Button color when closed
+- `openMenuButtonColor` - Button color when open
+- `accentColor` - Accent color for highlights
+
+**Features**:
+- Layered slide-in animation with GSAP
+- Staggered item entrance animations
+- Animated plus icon that rotates to X
+- Cycling "Menu"/"Close" text animation
+- Click-away to close functionality
+- Accessibility support (ARIA labels)
+
+**Animation Timeline** (see `client/src/components/StaggeredMenu.jsx:72-127`):
+1. Pre-layers slide in with stagger (0.055s between each)
+2. Main panel slides in (0.5s duration, power3.out easing)
+3. Menu items animate in (0.7s duration, staggered by 0.065s)
+4. Item numbers fade in (0.45s duration)
+5. Social links animate in if present
+
+---
+
+### AnimatedList
+
+**Location**: `client/src/components/AnimatedList.jsx`
+
+A scrollable list component with Motion (Framer Motion) animations and keyboard navigation.
+
+```jsx
+const AnimatedList = ({
+  items = [],
+  renderItem,
+  showGradients = true,
+  enableArrowNavigation = true,
+  displayScrollbar = true,
+  initialSelectedIndex = -1,
+  onItemSelect,
+}) => {
+  // Implementation with Motion animations
+};
+```
+
+**Props**:
+- `items` - Array of items to display
+- `renderItem` - Function to render each item: `(item, index, isSelected) => JSX`
+- `showGradients` - Display top/bottom fade gradients (default: true)
+- `enableArrowNavigation` - Allow arrow key navigation (default: true)
+- `displayScrollbar` - Show scrollbar (default: true)
+- `initialSelectedIndex` - Initially selected item (default: -1)
+- `onItemSelect` - Callback when item is selected
+
+**Features**:
+- Intersection Observer for scroll-triggered animations
+- Fade-in animation on scroll into view
+- Keyboard navigation (Arrow keys, Tab, Enter)
+- Auto-scroll to selected item
+- Gradient overlays for scroll indication
+- Hover selection
+
+**AnimatedItem Implementation** (see `client/src/components/AnimatedList.jsx:5-21`):
+```jsx
+const AnimatedItem = ({ children, delay = 0, index, onMouseEnter, onClick }) => {
+  const ref = useRef(null);
+  const inView = useInView(ref, { amount: 0.2, triggerOnce: false });
+  return (
+    <Motion.div
+      ref={ref}
+      initial={{ scale: 0.96, opacity: 0, y: 8 }}
+      animate={inView ? { scale: 1, opacity: 1, y: 0 } : { scale: 0.96, opacity: 0, y: 8 }}
+      transition={{ duration: 0.22, delay }}
+    >
+      {children}
+    </Motion.div>
+  );
+};
+```
+
+---
+
+### FooterCarousel
+
+**Location**: `client/src/components/FooterCarousel.jsx`
+
+An auto-playing image carousel using Motion for smooth transitions.
+
+```jsx
+const SLIDES = [
+  { key: "Nami", name: "Nami" },
+  { key: "Smolder", name: "Smolder" },
+  { key: "Draven", name: "Draven" },
+  { key: "KSante", name: "K'Sante" },
+  { key: "Fiddlesticks", name: "Fiddlesticks" },
+  { key: "Vladimir", name: "Vladimir" },
+];
+
+const INTERVAL_MS = 5000;
+
+const variants = {
+  enter: (dir) => ({ x: dir > 0 ? "100%" : "-100%", opacity: 0 }),
+  center: { x: "0%", opacity: 1 },
+  exit: (dir) => ({ x: dir > 0 ? "-100%" : "100%", opacity: 0 }),
+};
+```
+
+**Features**:
+- Auto-plays every 5 seconds
+- Previous/Next navigation arrows
+- Dot indicators for direct navigation
+- Smooth slide transitions with AnimatePresence
+- Direction-aware animations (slides follow direction)
+- Champion splash art from Data Dragon CDN
+
+**Usage**:
+```jsx
+<FooterCarousel />
+```
+
+No props required - fully self-contained.
+
+---
+
+### Squares
+
+**Location**: `client/src/components/Squares.jsx`
+
+An animated background grid effect using HTML5 Canvas.
+
+```jsx
+const Squares = ({
+  direction = 'diagonal',
+  speed = 0.7,
+  borderColor = 'rgba(138, 43, 226, 0.4)',
+  squareSize = 80,
+  hoverFillColor = 'rgba(138, 43, 226, 0.2)',
+  className = ''
+}) => {
+  // Canvas-based animation implementation
+};
+```
+
+**Props**:
+- `direction` - Movement direction: "left", "right", "up", "down", "diagonal" (default: "diagonal")
+- `speed` - Animation speed in pixels per frame (default: 0.7)
+- `borderColor` - Grid line color (default: "rgba(138, 43, 226, 0.4)")
+- `squareSize` - Size of each grid square in pixels (default: 80)
+- `hoverFillColor` - Fill color on hover (default: "rgba(138, 43, 226, 0.2)")
+- `className` - Additional CSS classes
+
+**Features**:
+- Infinite scrolling grid animation
+- Responsive canvas sizing
+- Hover interaction with squares
+- Radial gradient overlay
+- RequestAnimationFrame for smooth 60fps animation
+- Fixed positioning as background layer
+
+---
+
+## Component Usage Patterns
+
+### In App.jsx
+
+```jsx
+import AppLayout from "./components/AppLayout.jsx";
+import Masonry from "react-masonry-css";
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState("ranking");
+  
+  return (
+    <AppLayout onTabChange={setActiveTab} activeTab={activeTab}>
+      <div className="app">
+        <div className="container">
+          {/* Page content based on activeTab */}
+        </div>
+      </div>
+    </AppLayout>
+  );
+}
+```
+
+### Masonry Layout Integration
+
+The app uses `react-masonry-css` for responsive grid layouts:
+
+```jsx
+const masonryBreakpoints = {
+  default: 5,
+  1800: 4,
+  1300: 3,
+  900: 2,
+  560: 1,
+};
+
+<Masonry
+  breakpointCols={masonryBreakpoints}
+  className="users-masonry-grid"
+  columnClassName="users-masonry-grid__column"
+>
+  {usersMasonryPlayers.map((player) => (
+    <article className="summoner-tile" key={player.riotId}>
+      {/* Player content */}
+    </article>
+  ))}
+</Masonry>
+```
+
+---
+
+## Best Practices
+
+### Component Structure
+- Keep components in `client/src/components/`
+- Pair each component with its CSS file (e.g., `StaggeredMenu.jsx` + `StaggeredMenu.css`)
+- Export as default for main components
+- Use named exports for sub-components
+
+### Props
+- Provide sensible defaults for all props
+- Document prop types in comments
+- Use destructuring with defaults in function signatures
+
+### Animation
+- Use GSAP for complex timeline animations (StaggeredMenu)
+- Use Motion for simpler entrance/exit animations (AnimatedList, FooterCarousel)
+- Use Canvas + requestAnimationFrame for continuous effects (Squares)
+
+### Performance
+- Use `useCallback` for event handlers
+- Use `useMemo` for expensive computations
+- Clean up event listeners and animations in useEffect returns
+- Use `will-change` CSS property for animated elements

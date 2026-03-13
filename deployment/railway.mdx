@@ -1,0 +1,163 @@
+---
+title: Deploy to Railway
+description: Step-by-step guide to deploy Tullidos SoloQ Ladder on Railway
+---
+
+Railway provides the fastest and simplest deployment experience for Tullidos SoloQ Ladder. This guide will get you from zero to production in minutes.
+
+## Prerequisites
+
+- A [Railway](https://railway.app) account
+- Your GitHub repository for Tullidos SoloQ Ladder
+- A valid Riot Games API key
+
+## Deployment Steps
+
+<Steps>
+
+<Step title="Create New Project">
+In your Railway dashboard:
+1. Click **New Project**
+2. Select **Deploy from GitHub Repo**
+3. Authorize Railway to access your GitHub account if you haven't already
+</Step>
+
+<Step title="Select Repository">
+Choose the Tullidos SoloQ Ladder repository from your list of repositories.
+
+Railway will automatically detect it as a Node.js project.
+</Step>
+
+<Step title="Configure Service Settings">
+Navigate to your service settings:
+
+1. **Root Directory**: Leave empty (use repository root)
+2. **Build Command**: 
+   ```bash
+   npm run build
+   ```
+3. **Start Command**:
+   ```bash
+   npm start
+   ```
+
+<Note>
+Railway should auto-detect these commands from your `package.json`, but it's good to verify.
+</Note>
+</Step>
+
+<Step title="Add Environment Variables">
+In the **Variables** section, add:
+
+- **`RIOT_API_KEY`** (required): Your Riot Games API key
+
+<Warning>
+The `RIOT_API_KEY` is required. Without it, the server will fail to start or return errors when fetching ladder data.
+</Warning>
+
+Optional variables:
+- `LADDER_CACHE_TTL_MS`: Cache TTL in milliseconds (default: 60000)
+- `MATCH_SYNC_TTL_MS`: Match sync interval (default: 1800000)
+- `RATE_LIMIT_FALLBACK_MS`: Rate limit fallback (default: 60000)
+- `FRIENDS_PER_REFRESH`: Friends to refresh per cycle (default: 2)
+
+<Note>
+Railway automatically sets the `PORT` environment variable - you don't need to configure it.
+</Note>
+</Step>
+
+<Step title="Deploy and Monitor">
+1. Click **Deploy** (or trigger a deployment by pushing to your connected branch)
+2. Watch the build logs in the Railway dashboard
+3. Once deployed, Railway will provide a public URL
+
+The build process will:
+1. Install root dependencies (`npm install`)
+2. Install server and client dependencies (via `postinstall` script)
+3. Build the frontend (`npm run build`)
+4. Start the Express server (`npm start`)
+</Step>
+
+<Step title="Verify Deployment">
+Open your Railway-provided URL in a browser. You should see:
+- The Tullidos SoloQ Ladder frontend
+- API endpoints responding at `/api/*`
+</Step>
+
+</Steps>
+
+## Common Issues
+
+### Build succeeds but site shows blank page
+
+**Cause**: The build didn't generate `client/dist` properly.
+
+**Solution**:
+1. Check build logs to ensure `npm run build` completed successfully
+2. Verify that the client build step ran after installing dependencies
+3. Make sure you're using the repository root, not the `client/` subdirectory
+
+### Error: "npm ERR! missing script: start"
+
+**Cause**: Railway is trying to start from the wrong directory.
+
+**Solution**:
+- Ensure **Root Directory** is empty (not set to `client/`)
+- Verify your Start Command is `npm start`
+- The start script should run from the repository root
+
+### Error: "Falta RIOT_API_KEY en server/.env"
+
+**Cause**: Missing required environment variable.
+
+**Solution**:
+1. Go to your service's **Variables** section in Railway
+2. Add `RIOT_API_KEY` with your Riot Games API key
+3. Redeploy the service
+
+### Rate limiting errors
+
+**Cause**: Riot API has strict rate limits (20 req/s, 100 req/2min).
+
+**Solution**:
+- Adjust `RATE_LIMIT_FALLBACK_MS` to a higher value (e.g., 120000 for 2 minutes)
+- Decrease `FRIENDS_PER_REFRESH` to reduce concurrent requests
+- The backend already implements conservative limits (18/s, 90/2min) for safety
+
+## Custom Domain
+
+To add a custom domain:
+
+1. Go to your service settings
+2. Navigate to **Domains**
+3. Click **Add Domain**
+4. Follow Railway's instructions to configure your DNS
+
+## Automatic Deployments
+
+Railway automatically deploys when you push to your connected Git branch:
+
+1. Go to **Settings** → **Service**
+2. Under **Source**, you can configure:
+   - Which branch triggers deployments
+   - Watch paths (deploy only on specific file changes)
+   - PR deployments (create preview deployments for pull requests)
+
+## Monitoring
+
+Railway provides:
+- **Logs**: Real-time application logs in the dashboard
+- **Metrics**: CPU, memory, and network usage
+- **Deployments**: History of all deployments with logs
+
+## Pricing
+
+- Railway offers $5 free credit per month
+- Pay-as-you-go beyond free tier
+- Check [Railway pricing](https://railway.app/pricing) for current rates
+
+## Next Steps
+
+- [Configure custom domain](https://docs.railway.app/guides/public-networking#custom-domains)
+- [Set up monitoring and alerts](https://docs.railway.app/reference/logs)
+- [Enable PR preview deployments](https://docs.railway.app/guides/github-autodeploys)

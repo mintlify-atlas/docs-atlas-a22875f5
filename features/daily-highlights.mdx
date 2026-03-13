@@ -1,0 +1,272 @@
+---
+title: Daily Highlights
+description: Track daily LP gains and losses to see who's grinding and who's tilting
+---
+
+The daily highlights feature tracks LP changes throughout the day to identify the biggest gainers and losers.
+
+## How It Works
+
+Every time the ladder refreshes, the server compares current LP to the snapshot from earlier in the day:
+
+1. **First Seen Today**: When a player is first seen, their LP is recorded as the baseline
+2. **Delta Tracking**: On each refresh, LP changes are calculated and accumulated
+3. **Daily Reset**: At midnight, all deltas reset and a new day begins
+4. **Highlights**: The API exposes the top gainers and worst losers for the current day
+
+## Data Structure
+
+The `dailyLpByDate` cache stores LP tracking per player per day:
+
+```javascript server/index.js
+const ladderCache = {
+  dailyLpByDate: {
+    "2026-03-13": {
+      "puuid:abc123...": {
+        puuid: "abc123...",
+        riotId: "PlayerName#TAG",
+        soloqStartLp: 67,
+        soloqCurrentLp: 89,
+        soloqDeltaLp: 22,
+        flexStartLp: 45,
+        flexCurrentLp: 31,
+        flexDeltaLp: -14,
+        firstSeenAt: "2026-03-13T08:00:00.000Z",
+        lastSeenAt: "2026-03-13T14:30:00.000Z"
+      }
+    }
+  },
+  lpSnapshotByPlayer: {
+    "puuid:abc123...": {
+      soloqLp: 89,
+      flexLp: 31,
+      lastDateKey: "2026-03-13",
+      lastSeenAt: "2026-03-13T14:30:00.000Z"
+    }
+  }
+};
+```
+
+<Info>
+  The cache keeps the last **14 days** of LP history to prevent unbounded growth.
+</Info>
+
+## LP Delta Calculation
+
+The `updateDailyLpTracker` function runs after every ladder refresh:
+
+```javascript server/index.js
+function updateDailyLpTracker(players) {
+  const todayKey = getDateKey();
+  const dailyMap = ladderCache.dailyLpByDate[todayKey] || {};
+  const snapshotByPlayer = ladderCache.lpSnapshotByPlayer || {};
+  const nowIso = new Date().toISOString();
+
+  for (const player of players || []) {
+    if (!player || player.error) continue;
+    const key = getDailyPlayerKey(player);
+    if (!key) continue;
+
+    const soloLp = Number(player?.soloq?.leaguePoints);
+    const flexLp = Number(player?.flex?.leaguePoints);
+
+    const entry = dailyMap[key] || {
+      puuid: player.puuid || null,
+      riotId: player.riotId || "Unknown",
+      soloqStartLp: Number.isFinite(soloLp) ? soloLp : null,
+      soloqCurrentLp: Number.isFinite(soloLp) ? soloLp : null,
+      soloqDeltaLp: 0,
+      flexStartLp: Number.isFinite(flexLp) ? flexLp : null,
+      flexCurrentLp: Number.isFinite(flexLp) ? flexLp : null,
+      flexDeltaLp: 0,
+      firstSeenAt: nowIso,
+      lastSeenAt: nowIso,
+    };
+
+    const playerSnapshot = snapshotByPlayer[key] || {
+      soloqLp: null,
+      flexLp: null,
+      lastDateKey: null,
+      lastSeenAt: null,
+    };
+
+    // Calculate delta by comparing to previous snapshot
+    if (Number.isFinite(soloLp)) {
+      if (entry.soloqStartLp === null) entry.soloqStartLp = soloLp;
+      const prevSolo = Number(playerSnapshot.soloqLp);
+      if (Number.isFinite(prevSolo) && playerSnapshot.lastDateKey === todayKey) {
+        entry.soloqDeltaLp = Number(entry.soloqDeltaLp || 0) + (soloLp - prevSolo);
+      }
+      entry.soloqCurrentLp = soloLp;
+      playerSnapshot.soloqLp = soloLp;
+    }
+
+    entry.lastSeenAt = nowIso;
+    playerSnapshot.lastDateKey = todayKey;
+    playerSnapshot.lastSeenAt = nowIso;
+    dailyMap[key] = entry;
+    snapshotByPlayer[key] = playerSnapshot;
+  }
+
+  ladderCache.dailyLpByDate[todayKey] = dailyMap;
+}
+```
+
+This approach accumulates all LP changes throughout the day, even if a player plays multiple games between refreshes.
+
+## Building Daily Highlights
+
+The `buildDailyHighlights` function processes today's data to find extremes:
+
+```javascript server/index.js
+function buildDailyHighlights() {
+  const todayKey = getDateKey();
+  const dailyMap = ladderCache.dailyLpByDate[todayKey] || {};
+  const entries = Object.values(dailyMap);
+
+  let bestSoloqGain = null;
+  let bestFlexGain = null;
+  let worstSoloqLoss = null;
+  let bestOverallGain = null;
+  let worstOverallLoss = null;
+
+  for (const row of entries) {
+    let totalDelta = 0;
+
+    if (Number.isFinite(row.soloqStartLp) && Number.isFinite(row.soloqCurrentLp)) {
+      const delta = Number.isFinite(Number(row.soloqDeltaLp))
+        ? Number(row.soloqDeltaLp)
+        : (row.soloqCurrentLp - row.soloqStartLp);
+      totalDelta += delta;
+      if (!bestSoloqGain || delta > bestSoloqGain.deltaLp) {
+        bestSoloqGain = { player: row.riotId, deltaLp: delta, currentLp: row.soloqCurrentLp };
+      }
+      if (!worstSoloqLoss || delta < worstSoloqLoss.deltaLp) {
+        worstSoloqLoss = { player: row.riotId, deltaLp: delta, currentLp: row.soloqCurrentLp };
+      }
+    }
+
+    if (Number.isFinite(row.flexStartLp) && Number.isFinite(row.flexCurrentLp)) {
+      const delta = Number.isFinite(Number(row.flexDeltaLp))
+        ? Number(row.flexDeltaLp)
+        : (row.flexCurrentLp - row.flexStartLp);
+      totalDelta += delta;
+      if (!bestFlexGain || delta > bestFlexGain.deltaLp) {
+        bestFlexGain = { player: row.riotId, deltaLp: delta, currentLp: row.flexCurrentLp };
+      }
+    }
+
+    if (!bestOverallGain || totalDelta > bestOverallGain.deltaLp) {
+      bestOverallGain = { player: row.riotId, deltaLp: totalDelta };
+    }
+    if (!worstOverallLoss || totalDelta < worstOverallLoss.deltaLp) {
+      worstOverallLoss = { player: row.riotId, deltaLp: totalDelta };
+    }
+  }
+
+  return {
+    date: todayKey,
+    bestSoloqGain,
+    bestFlexGain,
+    worstSoloqLoss,
+    bestOverallGain,
+    worstOverallLoss,
+  };
+}
+```
+
+## API Endpoint
+
+Daily highlights are included in the `/api/status` response:
+
+```javascript
+GET /api/status
+```
+
+```json
+{
+  "ok": true,
+  "dailyHighlights": {
+    "date": "2026-03-13",
+    "bestSoloqGain": {
+      "player": "Grinder#0001",
+      "deltaLp": 67,
+      "currentLp": 234
+    },
+    "bestFlexGain": {
+      "player": "FlexKing#EUW",
+      "deltaLp": 42,
+      "currentLp": 156
+    },
+    "worstSoloqLoss": {
+      "player": "Tilted#RAGE",
+      "deltaLp": -53,
+      "currentLp": 12
+    },
+    "bestOverallGain": {
+      "player": "Grinder#0001",
+      "deltaLp": 67
+    },
+    "worstOverallLoss": {
+      "player": "Tilted#RAGE",
+      "deltaLp": -53
+    }
+  }
+}
+```
+
+## UI Display
+
+The frontend shows daily highlights in the activity section:
+
+```jsx client/src/App.jsx
+const dailyHighlights = apiStatus?.dailyHighlights || null;
+const bestOverallToday = dailyHighlights?.bestOverallGain || null;
+const worstOverallToday = dailyHighlights?.worstOverallLoss || null;
+
+<div className="activity-card activity-card--winner">
+  <span className="activity-label">Ganador LPs hoy (global)</span>
+  <span className="activity-value">{bestOverallToday?.player || "—"}</span>
+  <span className="activity-delta-hero activity-delta-hero--up">
+    {formatSignedLps(bestOverallToday?.deltaLp ?? 0)}
+  </span>
+</div>
+
+<div className="activity-card activity-card--loser">
+  <span className="activity-label">Perdedor LPs hoy (global)</span>
+  <span className="activity-value">{worstOverallToday?.player || "—"}</span>
+  <span className="activity-delta-hero activity-delta-hero--down">
+    {formatLossLps(worstOverallToday?.deltaLp ?? 0)}
+  </span>
+</div>
+```
+
+<Tip>
+  Daily highlights provide instant feedback on who's actively playing and how their sessions are going.
+</Tip>
+
+## Persistence
+
+Daily LP data is persisted to `ladder-cache.json` on every refresh, so it survives server restarts:
+
+```javascript server/index.js
+function saveCacheToFile() {
+  try {
+    fs.writeFileSync(
+      CACHE_FILE,
+      JSON.stringify({
+        players: ladderCache.players,
+        dailyLpByDate: ladderCache.dailyLpByDate,
+        lpSnapshotByPlayer: ladderCache.lpSnapshotByPlayer,
+        // ... other cache data
+      }, null, 2)
+    );
+  } catch (err) {
+    console.warn("Could not save cache to file:", err.message);
+  }
+}
+```
+
+<Note>
+  Only the last **14 days** are kept to prevent the cache file from growing indefinitely.
+</Note>

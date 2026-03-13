@@ -1,0 +1,593 @@
+---
+title: Data Persistence
+description: File-based persistence for friends, cache, and API statistics
+---
+
+The backend uses JSON file-based persistence for configuration and caching, with atomic writes and graceful degradation.
+
+## File Structure
+
+### Configuration Files
+
+```javascript
+const FRIENDS_FILE = path.join(__dirname, "friends.json");
+const CACHE_FILE = path.join(__dirname, "ladder-cache.json");
+const API_STATS_FILE = path.join(__dirname, "api-stats.json");
+```
+
+**Location**: `server/index.js:17-19`
+
+**Directory**: All files stored in `server/` directory alongside `index.js`
+
+## friends.json
+
+### Structure
+
+Array of tracked player objects:
+
+```json
+[
+  {
+    "gameName": "Azpy",
+    "tagLine": "1337",
+    "puuid": "abc123-def456-...",
+    "mote": "🎮"
+  },
+  {
+    "gameName": "PlayerTwo",
+    "tagLine": "EUW",
+    "puuid": "xyz789-uvw012-...",
+    "mote": "🏆"
+  }
+]
+```
+
+### Fields
+
+- **gameName** (string, required): Riot account game name
+- **tagLine** (string, required): Riot account tag
+- **puuid** (string, optional): Permanent unique identifier
+- **mote** (string, optional): Custom emoji for the player
+
+### PUUID Auto-Resolution
+
+PUUIDs are automatically added/updated after successful API fetch:
+
+```javascript
+const nextFriends = results.map((result, index) => {
+  const friend = friends[index] || {};
+  if (result.status !== "fulfilled") return friend;
+  const p = result.value;
+  const next = {
+    gameName: p.gameName,
+    tagLine: p.tagLine,
+    puuid: p.puuid,
+  };
+  const friendEmote = getFriendEmote(friend);
+  if (friendEmote) next.mote = friendEmote;
+  return next;
+});
+```
+
+**Location**: `server/index.js:977-989`
+
+**Benefit**: Handles Riot ID changes automatically - subsequent fetches use PUUID instead of name/tag
+
+### Read Operations
+
+Simple synchronous read:
+
+```javascript
+function readFriends() {
+  return JSON.parse(fs.readFileSync(FRIENDS_FILE, "utf8"));
+}
+```
+
+**Location**: `server/index.js:788-790`
+
+**Usage**: Called at start of each ladder refresh and by `/api/friends` endpoint
+
+### Write Operations
+
+Direct synchronous write with error handling:
+
+```javascript
+fs.writeFileSync(FRIENDS_FILE, JSON.stringify(friends, null, 2));
+```
+
+**Location**: `server/index.js:1163`
+
+**Triggers**:
+- Adding a friend via `POST /api/friends`
+- Removing a friend via `DELETE /api/friends/:gameName/:tagLine`
+- Auto-update with PUUIDs after ladder refresh
+
+## ladder-cache.json
+
+### Structure
+
+Complete ladder state snapshot:
+
+```json
+{
+  "players": [
+    {
+      "riotId": "Azpy#1337",
+      "gameName": "Azpy",
+      "tagLine": "1337",
+      "puuid": "...",
+      "profileIconId": 5379,
+      "summonerLevel": 437,
+      "soloq": {
+        "tier": "DIAMOND",
+        "rank": "II",
+        "leaguePoints": 67,
+        "wins": 234,
+        "losses": 198
+      },
+      "flex": null,
+      "topChampions": ["Thresh", "Nautilus", "Leona"],
+      "mainRole": "SUPPORT",
+      "emote": "🎮"
+    }
+  ],
+  "rankedMatchesByPuuid": {
+    "puuid-abc123": {
+      "matches": [
+        {
+          "id": "EUW1_1234567890",
+          "championName": "Thresh",
+          "teamPosition": "SUPPORT",
+          "queueId": 420,
+          "gameEndTimestamp": 1710331200000
+        }
+      ],
+      "lastSyncAt": "2026-03-13T10:30:00.000Z"
+    }
+  },
+  "playerSnapshotByKey": {
+    "puuid:abc123": { /* full player object */ },
+    "riot:azpy#1337": { /* full player object */ }
+  },
+  "rawDataByPuuid": {
+    "puuid-abc123": {
+      "account": { "gameName": "Azpy", "tagLine": "1337", "puuid": "..." },
+      "summoner": { "profileIconId": 5379, "summonerLevel": 437 },
+      "leagueEntries": [ /* league entries */ ],
+      "lastAccountAt": "2026-03-13T10:30:00.000Z",
+      "lastSummonerAt": "2026-03-13T10:30:00.000Z",
+      "lastLeagueAt": "2026-03-13T10:30:00.000Z"
+    }
+  },
+  "dailyLpByDate": {
+    "2026-03-13": {
+      "puuid:abc123": {
+        "puuid": "abc123",
+        "riotId": "Azpy#1337",
+        "soloqStartLp": 50,
+        "soloqCurrentLp": 67,
+        "soloqDeltaLp": 17,
+        "flexStartLp": null,
+        "flexCurrentLp": null,
+        "flexDeltaLp": 0,
+        "firstSeenAt": "2026-03-13T08:00:00.000Z",
+        "lastSeenAt": "2026-03-13T10:30:00.000Z"
+      }
+    }
+  },
+  "lpSnapshotByPlayer": {
+    "puuid:abc123": {
+      "soloqLp": 67,
+      "flexLp": null,
+      "lastDateKey": "2026-03-13",
+      "lastSeenAt": "2026-03-13T10:30:00.000Z"
+    }
+  },
+  "refreshCursor": 12,
+  "lastUpdatedAt": "2026-03-13T10:30:00.000Z",
+  "lastError": null
+}
+```
+
+### Cache Fields
+
+#### players
+
+Sorted array of enriched player objects ready for API responses.
+
+**Sort Order**: Descending by Solo/Duo rank (tier → rank → LP)
+
+**Location**: `server/index.js:295`
+
+#### rankedMatchesByPuuid
+
+Per-player match history cache with sync timestamps.
+
+**Purpose**: 
+- Avoid re-fetching match history every refresh
+- Build champion pool and main role
+- Track match history for 30 minutes before refresh
+
+**TTL**: `MATCH_SYNC_TTL_MS` (default: 30 minutes)
+
+**Location**: `server/index.js:296`
+
+#### playerSnapshotByKey
+
+Player lookups by both PUUID and Riot ID.
+
+**Keys**:
+- `puuid:{puuid}` - Lookup by permanent ID
+- `riot:{gamename}#{tagline}` - Lookup by current name (lowercase)
+
+**Purpose**: Fast fallback when API calls fail
+
+**Location**: `server/index.js:297`
+
+#### rawDataByPuuid
+
+Per-step API response cache for resilient fetching.
+
+**Purpose**: Each API endpoint (account, summoner, league) caches independently so partial failures don't lose previously fetched data
+
+**Location**: `server/index.js:299`
+
+#### dailyLpByDate
+
+Daily LP tracking for gain/loss highlights.
+
+**Retention**: Last 14 days
+
+**Pruning**:
+```javascript
+const days = Object.keys(ladderCache.dailyLpByDate).sort();
+while (days.length > 14) {
+  const oldest = days.shift();
+  delete ladderCache.dailyLpByDate[oldest];
+}
+```
+
+**Location**: `server/index.js:378-383`
+
+#### lpSnapshotByPlayer
+
+Cross-day LP snapshot for delta calculation.
+
+**Purpose**: Tracks LP at end of each day to calculate delta on next refresh
+
+**Location**: `server/index.js:301`
+
+#### refreshCursor
+
+Rotating index for incremental friend refreshes.
+
+**Range**: 0 to `friends.length - 1`
+
+**Behavior**: Cycles through friend list, refreshing `FRIENDS_PER_REFRESH` (default: 2) players per cycle
+
+**Location**: `server/index.js:302`
+
+### Save Operations
+
+Synchronous write with error handling:
+
+```javascript
+function saveCacheToFile() {
+  try {
+    fs.writeFileSync(
+      CACHE_FILE,
+      JSON.stringify({
+        players: ladderCache.players,
+        rankedMatchesByPuuid: ladderCache.rankedMatchesByPuuid,
+        playerSnapshotByKey: ladderCache.playerSnapshotByKey,
+        rawDataByPuuid: ladderCache.rawDataByPuuid,
+        dailyLpByDate: ladderCache.dailyLpByDate,
+        lpSnapshotByPlayer: ladderCache.lpSnapshotByPlayer,
+        refreshCursor: ladderCache.refreshCursor,
+        lastUpdatedAt: ladderCache.lastUpdatedAt,
+        lastError: ladderCache.lastError,
+      }, null, 2)
+    );
+  } catch (err) {
+    console.warn("Could not save cache to file:", err.message);
+  }
+}
+```
+
+**Location**: `server/index.js:530-549`
+
+**Triggers**:
+- After each ladder refresh
+- After updating daily LP tracker
+
+### Load Operations
+
+Startup cache restoration:
+
+```javascript
+function loadCacheFromFile() {
+  try {
+    if (fs.existsSync(CACHE_FILE)) {
+      const cached = JSON.parse(fs.readFileSync(CACHE_FILE, "utf8"));
+      ladderCache.players = cached.players || [];
+      ladderCache.rankedMatchesByPuuid = cached.rankedMatchesByPuuid || {};
+      ladderCache.playerSnapshotByKey = cached.playerSnapshotByKey || {};
+      ladderCache.rawDataByPuuid = cached.rawDataByPuuid || {};
+      ladderCache.dailyLpByDate = cached.dailyLpByDate || {};
+      ladderCache.lpSnapshotByPlayer = cached.lpSnapshotByPlayer || {};
+      ladderCache.refreshCursor = Number(cached.refreshCursor) || 0;
+      ladderCache.lastUpdatedAt = cached.lastUpdatedAt || null;
+      ladderCache.lastError = cached.lastError || null;
+      const rawCount = Object.keys(ladderCache.rawDataByPuuid).length;
+      console.log(`Loaded ladder cache from file: ${ladderCache.players.length} players, ${rawCount} raw-data entries`);
+      return true;
+    }
+  } catch (err) {
+    console.warn("Could not load cache from file:", err.message);
+  }
+  return false;
+}
+```
+
+**Location**: `server/index.js:551-572`
+
+**Startup Logic**:
+```javascript
+const cacheLoadedFromDisk = loadCacheFromFile();
+if (!cacheLoadedFromDisk) {
+  console.log("No cache file found. Ladder will be empty until first refresh.");
+  refreshLadderCache().catch((error) => {
+    console.error("ERROR on first refresh:", error.message);
+  });
+} else {
+  console.log("Using cached ladder snapshot from disk. Background refresh will run on schedule.");
+}
+```
+
+**Location**: `server/index.js:1284-1302`
+
+**Benefit**: Server restarts don't require immediate API calls; serves cached data immediately
+
+## api-stats.json
+
+### Structure
+
+API usage statistics:
+
+```json
+{
+  "totalRiotRequests": 15847,
+  "perDay": {
+    "2026-03-01": 523,
+    "2026-03-02": 487,
+    "2026-03-03": 512,
+    "2026-03-13": 234
+  },
+  "updatedAt": "2026-03-13T10:30:00.000Z"
+}
+```
+
+### Fields
+
+- **totalRiotRequests**: Lifetime counter of Riot API calls
+- **perDay**: Last 31 days of daily request counts
+- **updatedAt**: Last save timestamp
+
+### Day Key Format
+
+```javascript
+function getDateKey(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+```
+
+**Format**: `YYYY-MM-DD`
+
+**Location**: `server/index.js:42-47`
+
+### Retention Policy
+
+Keeps last 31 days:
+
+```javascript
+const keepDays = Object.keys(nextPerDay).sort().slice(-31);
+const compactPerDay = {};
+for (const day of keepDays) compactPerDay[day] = Number(nextPerDay[day]) || 0;
+```
+
+**Location**: `server/index.js:84-86`
+
+### Load Operations
+
+Restores counters on startup:
+
+```javascript
+function loadApiStatsFromFile() {
+  try {
+    if (!fs.existsSync(API_STATS_FILE)) return;
+    const parsed = JSON.parse(fs.readFileSync(API_STATS_FILE, "utf8"));
+    const persistedTotal = Number(parsed?.totalRiotRequests);
+    if (Number.isFinite(persistedTotal) && persistedTotal >= 0) {
+      totalRiotRequests = persistedTotal;
+    }
+
+    const todayKey = getDateKey();
+    const perDay = parsed?.perDay || {};
+    const persistedToday = Number(perDay[todayKey]);
+    if (Number.isFinite(persistedToday) && persistedToday >= 0) {
+      todayRiotRequests = persistedToday;
+    }
+  } catch (err) {
+    console.warn("Could not load API stats from file:", err.message);
+  }
+}
+```
+
+**Location**: `server/index.js:49-67`
+
+**Called**: On server startup before any API calls
+
+### Save Operations
+
+Throttled writes to reduce I/O:
+
+```javascript
+function saveApiStatsToFile(force = false) {
+  const now = Date.now();
+  if (!force && now - lastApiStatsPersistAt < 5000) return;
+  try {
+    let parsed = {};
+    if (fs.existsSync(API_STATS_FILE)) {
+      try {
+        parsed = JSON.parse(fs.readFileSync(API_STATS_FILE, "utf8"));
+      } catch {
+        parsed = {};
+      }
+    }
+
+    const todayKey = getDateKey();
+    const nextPerDay = { ...(parsed.perDay || {}), [todayKey]: todayRiotRequests };
+    const keepDays = Object.keys(nextPerDay).sort().slice(-31);
+    const compactPerDay = {};
+    for (const day of keepDays) compactPerDay[day] = Number(nextPerDay[day]) || 0;
+
+    fs.writeFileSync(
+      API_STATS_FILE,
+      JSON.stringify({
+        totalRiotRequests,
+        perDay: compactPerDay,
+        updatedAt: new Date().toISOString(),
+      }, null, 2)
+    );
+    lastApiStatsPersistAt = now;
+  } catch (err) {
+    console.warn("Could not save API stats to file:", err.message);
+  }
+}
+```
+
+**Location**: `server/index.js:69-100`
+
+**Throttle**: Minimum 5 seconds between writes (unless `force = true`)
+
+**Triggers**:
+- After each Riot API request (throttled)
+- On graceful shutdown (forced)
+
+## Startup Cache Loading
+
+### Load Sequence
+
+```javascript
+// 1. Load DDragon version
+fetchDDragonVersion().catch(console.error);
+
+// 2. Load API stats
+loadApiStatsFromFile();
+
+// 3. Load ladder cache from file
+const cacheLoadedFromDisk = loadCacheFromFile();
+if (!cacheLoadedFromDisk) {
+  console.log("No cache file found. Ladder will be empty until first refresh.");
+} else if (Array.isArray(ladderCache.players) && ladderCache.players.length > 0) {
+  // Seed today's LP baseline from cached snapshot
+  updateDailyLpTracker(ladderCache.players);
+  saveCacheToFile();
+}
+
+// 4. Schedule periodic refresh
+if (RIOT_API_KEY) {
+  if (!cacheLoadedFromDisk) {
+    refreshLadderCache().catch((error) => {
+      console.error("ERROR on first refresh:", error.message);
+    });
+  } else {
+    console.log("Using cached ladder snapshot from disk. Background refresh will run on schedule.");
+  }
+}
+
+scheduleLadderRefresh();
+```
+
+**Location**: `server/index.js:1279-1304`
+
+**Logic**:
+1. Load DDragon version (no API key needed)
+2. Restore API usage stats
+3. Try loading ladder cache
+4. If cache exists: Seed daily LP tracker, skip immediate refresh
+5. If no cache: Trigger immediate full refresh
+6. Start scheduled refresh interval
+
+## Shutdown Handlers
+
+### Graceful Shutdown
+
+Persist stats on process exit:
+
+```javascript
+process.on("SIGINT", () => {
+  saveApiStatsToFile(true);
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  saveApiStatsToFile(true);
+  process.exit(0);
+});
+
+process.on("exit", () => {
+  saveApiStatsToFile(true);
+});
+```
+
+**Location**: `server/index.js:1306-1318`
+
+**Signals Handled**:
+- `SIGINT` - Ctrl+C interrupt
+- `SIGTERM` - Graceful shutdown signal
+- `exit` - Any process exit
+
+**Note**: Ladder cache is saved after each refresh, so shutdown only needs to force-save API stats
+
+## File I/O Patterns
+
+### Synchronous Writes
+
+All file operations use synchronous I/O:
+
+```javascript
+fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+```
+
+**Rationale**: 
+- Simple error handling
+- Guarantees completion before continuing
+- No async complexity for local file operations
+
+### Error Handling
+
+All file operations wrapped in try-catch:
+
+```javascript
+try {
+  fs.writeFileSync(CACHE_FILE, JSON.stringify(data, null, 2));
+} catch (err) {
+  console.warn("Could not save cache to file:", err.message);
+}
+```
+
+**Behavior**: Logs warning but doesn't crash server
+
+### Pretty Printing
+
+All JSON files formatted with 2-space indentation:
+
+```javascript
+JSON.stringify(data, null, 2)
+```
+
+**Benefit**: Human-readable files for debugging and manual editing
