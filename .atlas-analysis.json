@@ -1,0 +1,122 @@
+{
+  "projectType": "saas",
+  "projectName": "Tullidos SoloQ Ladder",
+  "projectDescription": "Custom League of Legends ladder tracker for monitoring friends' SoloQ and Flex rankings with daily activity highlights.",
+  "theme": "almond",
+  "primaryColor": "#5383e8",
+  "lightColor": "#74aaf7",
+  "darkColor": "#3b5998",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "installation"
+            ]
+          },
+          {
+            "group": "Core Features",
+            "pages": [
+              "features/ladder-tracking",
+              "features/daily-highlights",
+              "features/player-stats",
+              "features/friend-management"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment",
+              "configuration/riot-api",
+              "configuration/caching"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/overview",
+              "deployment/railway",
+              "deployment/render",
+              "deployment/docker"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Endpoints",
+            "pages": [
+              "api/ladder",
+              "api/player",
+              "api/friends",
+              "api/status"
+            ]
+          },
+          {
+            "group": "Data Models",
+            "pages": [
+              "api/models/player",
+              "api/models/rank-data",
+              "api/models/daily-highlights"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Development",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "development/architecture",
+              "development/rate-limiting",
+              "development/caching-strategy"
+            ]
+          },
+          {
+            "group": "Frontend",
+            "pages": [
+              "development/frontend/components",
+              "development/frontend/animations",
+              "development/frontend/styling"
+            ]
+          },
+          {
+            "group": "Backend",
+            "pages": [
+              "development/backend/api-design",
+              "development/backend/riot-integration",
+              "development/backend/data-persistence"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Real-time SoloQ and Flex rank tracking",
+    "Daily LP gain/loss highlights",
+    "Riot API rate limiting and caching",
+    "Friend list management with custom emotes",
+    "Champion mastery and role detection",
+    "Persistent cache with automatic sync",
+    "Responsive masonry grid layout",
+    "API statistics and monitoring"
+  ],
+  "publicApiSurface": [
+    "GET /api/ladder - Fetch ranked ladder with all tracked players",
+    "GET /api/player?gameName=X&tagLine=Y - Get individual player stats",
+    "GET /api/friends - List all tracked friends",
+    "POST /api/friends - Add new friend to tracker",
+    "DELETE /api/friends/:gameName/:tagLine - Remove friend",
+    "GET /api/status - Server status and rate limit info",
+    "POST /api/force-refresh - Force immediate ladder refresh"
+  ]
+}
